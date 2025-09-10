@@ -362,7 +362,46 @@ install_cursor() {
   local temp_file="/tmp/cursor.deb"
   local max_retries=3
 
-  # Tenta baixar o .deb mais recente de endpoints conhecidos
+  # 1) Tentar obter URL assinado via API pública do site
+  fetch_cursor_deb_url_api() {
+    local api_base="https://cursor.com/api/download"
+    local candidates=(
+      "${api_base}?platform=linux&arch=amd64&package=deb"
+      "${api_base}?platform=linux&arch=x64&package=deb"
+      "${api_base}?os=linux&arch=amd64&format=deb"
+    )
+    local headers=(
+      "-H" "Accept: application/json"
+      "-H" "Referer: https://cursor.com/downloads"
+      "-A" "Mozilla/5.0"
+    )
+    for u in "${candidates[@]}"; do
+      print_info "Consultando API: $u"
+      local body
+      if command -v curl >/dev/null 2>&1; then
+        body=$(curl -fsSL "${headers[@]}" "$u" 2>/dev/null || true)
+      else
+        body=$(wget -qO- "$u" 2>/dev/null || true)
+      fi
+      if [[ -n "$body" ]]; then
+        # Extrair primeira URL .deb do JSON/HTML
+        local found
+        if command -v jq >/dev/null 2>&1; then
+          found=$(printf '%s' "$body" | jq -r '..|.url?,..|.href?,..|.downloadUrl? | select(type=="string") | select(test("\\.deb$"))' 2>/dev/null | head -n1)
+        fi
+        if [[ -z "$found" ]]; then
+          found=$(printf '%s' "$body" | grep -Eo 'https?://[^" ]+\.deb' | head -n1 || true)
+        fi
+        if [[ -n "$found" ]]; then
+          printf '%s' "$found"
+          return 0
+        fi
+      fi
+    done
+    return 1
+  }
+
+  # 2) Tenta baixar o .deb mais recente de endpoints conhecidos
   local endpoints=(
     "https://downloader.cursor.sh/linux/deb/x64"
     "https://downloader.cursor.sh/linux/deb/amd64"
@@ -385,17 +424,30 @@ install_cursor() {
     return 1
   }
 
-  # Tenta endpoints diretos
-  for attempt in $(seq 1 $max_retries); do
-    for url in "${endpoints[@]}"; do
-      if download_deb "$url"; then
-        attempt=$max_retries
-        break
-      fi
-    done
-  done
+  # Passo A: API
+  api_url=$(fetch_cursor_deb_url_api || true)
+  if [[ -n "$api_url" ]]; then
+    print_info "Baixando .deb via API: $api_url"
+    if command -v curl >/dev/null 2>&1; then
+      curl -fL --retry 3 --retry-delay 2 -o "$temp_file" "$api_url" 2>/dev/null || true
+    else
+      wget -O "$temp_file" "$api_url" 2>/dev/null || true
+    fi
+  fi
 
-  # Fallback: extrair link .deb da página de downloads
+  # Passo B: Endpoints diretos
+  if [[ ! -s "$temp_file" ]] || ! dpkg-deb -I "$temp_file" >/dev/null 2>&1; then
+    for attempt in $(seq 1 $max_retries); do
+      for url in "${endpoints[@]}"; do
+        if download_deb "$url"; then
+          attempt=$max_retries
+          break
+        fi
+      done
+    done
+  fi
+
+  # Passo C: Fallback — extrair link .deb da página de downloads (JS pode gerar link dinâmico)
   if [[ ! -s "$temp_file" ]] || ! dpkg-deb -I "$temp_file" >/dev/null 2>&1; then
     print_warn "Falha nos endpoints diretos. Tentando extrair link do site..."
     if command -v curl >/dev/null 2>&1; then
@@ -403,7 +455,16 @@ install_cursor() {
     else
       page_html=$(wget -qO- https://cursor.com/downloads 2>/dev/null || true)
     fi
+    # Também tentar puxar chunks JS e procurar URL .deb
     deb_url=$(printf '%s' "$page_html" | grep -Eo 'https?://[^" ]+\.deb' | grep -E '(amd64|x64|linux)' | head -n1 || true)
+    if [[ -z "$deb_url" ]]; then
+      chunk_paths=$(printf '%s' "$page_html" | grep -Eo '/_next/static/chunks/[^"<]+' | head -n 30 || true)
+      for p in $chunk_paths; do
+        js=$(curl -fsSL "https://cursor.com$p" 2>/dev/null || true)
+        cand=$(printf '%s' "$js" | grep -Eo 'https?://[^" ]+\.deb' | head -n1 || true)
+        if [[ -n "$cand" ]]; then deb_url="$cand"; break; fi
+      done
+    fi
     if [[ -n "$deb_url" ]]; then
       print_info "Encontrado .deb: $deb_url"
       if command -v curl >/dev/null 2>&1; then
