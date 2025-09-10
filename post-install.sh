@@ -201,9 +201,16 @@ setup_repositories() {
       print_info "Instalando Flatpak..."
       sudo apt install -y flatpak gnome-software-plugin-flatpak
       flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
-      print_info "Flatpak configurado. Reinicie para usar totalmente."
+      
+      # Configurar XDG_DATA_DIRS para esta sessão
+      export XDG_DATA_DIRS="/var/lib/flatpak/exports/share:$HOME/.local/share/flatpak/exports/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+      
+      print_info "Flatpak configurado."
+      print_warn "Apps Flatpak podem não aparecer no menu até reiniciar a sessão"
     else
       print_info "Flatpak já está instalado."
+      # Garantir que XDG_DATA_DIRS esteja configurado mesmo se Flatpak já existir
+      export XDG_DATA_DIRS="/var/lib/flatpak/exports/share:$HOME/.local/share/flatpak/exports/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
     fi
   fi
   
@@ -377,12 +384,23 @@ install_obsidian() {
   
   print_info "Instalando Obsidian..."
   if [[ "$auto_install_flatpak" == true ]]; then
-    if flatpak install -y flathub md.obsidian.Obsidian 2>/dev/null; then
+    # Garantir que o flathub está configurado
+    flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo 2>/dev/null || true
+    
+    print_info "Instalando Obsidian via Flatpak..."
+    if flatpak install -y flathub md.obsidian.Obsidian; then
       print_info "Obsidian instalado com sucesso via Flatpak!"
       return 0
     else
       print_warn "Falha ao instalar Obsidian via Flatpak"
-      return 1
+      print_info "Tentando comando alternativo..."
+      if flatpak install -y md.obsidian.Obsidian; then
+        print_info "Obsidian instalado com sucesso!"
+        return 0
+      else
+        print_warn "Todas as tentativas falharam para Obsidian"
+        return 1
+      fi
     fi
   else
     print_info "Flatpak desabilitado, Obsidian não foi instalado"
@@ -416,7 +434,7 @@ install_zapzap() {
 }
 
 install_mission_center() {
-  if flatpak list | grep -q io.missioncenter.MissionCenter; then
+  if flatpak list | grep -q io.missioncenter.MissionCenter 2>/dev/null; then
     print_info "Mission Center já está instalado."
     return 0
   fi
@@ -424,13 +442,23 @@ install_mission_center() {
   print_info "Instalando Mission Center (Monitor do Sistema)..."
   
   if [[ "$auto_install_flatpak" == true ]]; then
+    # Garantir que o flathub está configurado
+    flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo 2>/dev/null || true
+    
     print_info "Instalando Mission Center via Flatpak..."
-    if flatpak install -y flathub io.missioncenter.MissionCenter 2>/dev/null; then
+    if flatpak install -y flathub io.missioncenter.MissionCenter; then
       print_info "Mission Center instalado com sucesso via Flatpak!"
       return 0
     else
       print_warn "Falha ao instalar Mission Center via Flatpak"
-      return 1
+      print_info "Tentando comando alternativo..."
+      if flatpak install -y io.missioncenter.MissionCenter; then
+        print_info "Mission Center instalado com sucesso!"
+        return 0
+      else
+        print_warn "Todas as tentativas falharam para Mission Center"
+        return 1
+      fi
     fi
   else
     print_warn "Flatpak desabilitado, Mission Center não pode ser instalado"
