@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Configurar instalação não-interativa para evitar prompts
+export DEBIAN_FRONTEND=noninteractive
+
 # Ubuntu Setup - Post-install script for Ubuntu 25 + GNOME
 # 
 # Execução remota (sem git clone):
@@ -95,6 +98,10 @@ main() {
 
 update_system() {
   print_step "Atualizando o sistema"
+  
+  # Pré-configurar iperf3 para não fazer prompts interativos
+  print_info "Pré-configurando pacotes para instalação não-interativa..."
+  echo 'iperf3 iperf3/start_daemon boolean false' | sudo debconf-set-selections 2>/dev/null || true
   
   # Modernizar formato dos sources para o novo padrão do Ubuntu
   print_info "Modernizando formato dos repositórios APT..."
