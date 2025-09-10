@@ -74,13 +74,13 @@ fi
 keep_sudo_alive() {
   while true; do
     sudo -n true
-    sleep 300  # Renovar a cada 5 minutos
-  done 2>/dev/null &
-  echo $!
+    sleep 60  # Renovar a cada 1 minuto
+  done 2>/dev/null
 }
 
 # Iniciar keepalive do sudo
-SUDO_PID=$(keep_sudo_alive)
+keep_sudo_alive &
+SUDO_PID=$!
 
 create_backup() {
   local file="$1"
