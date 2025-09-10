@@ -33,8 +33,12 @@ bash <(curl -fsSL https://raw.githubusercontent.com/takitani/ubuntu-setup/main/p
   - Discord
   - Visual Studio Code  
   - Slack Desktop
-  - JetBrains Toolbox
+  - JetBrains IDEs (Rider, DataGrip)
   - Cursor IDE
+  - LocalSend (transferência de arquivos)
+  - ZapZap (WhatsApp Web)
+  - Mission Center (monitor do sistema)
+  - Postman (API testing)
   - HardInfo (informações de hardware)
   - GNOME Tweaks e Extensions
 
@@ -55,10 +59,10 @@ bash <(curl -fsSL https://raw.githubusercontent.com/takitani/ubuntu-setup/main/p
 - ✅ **Comportamento das janelas** configurado
 - ✅ **Touchpad** com tap-to-click e scroll natural
 - ✅ **Nautilus** com thumbnails e tree view
-- ✅ **Extensões** essenciais instaladas:
-  - Dash to Dock
+- ✅ **Extensões** essenciais instaladas e configuradas:
+  - Dash to Dock (parte inferior, auto hide com pressão)
   - Clipboard Indicator
-  - System Monitor
+  - System Monitor  
   - User Themes
 
 ### Ferramentas de Desenvolvimento
@@ -67,9 +71,14 @@ bash <(curl -fsSL https://raw.githubusercontent.com/takitani/ubuntu-setup/main/p
 - ✅ **.NET 9** instalado via Mise
 - ✅ **CLIs de IA** instalados:
   - Codex CLI (`@openai/codex`)
-  - Claude CLI (`@anthropic/claude-cli`)
+  - Claude CLI (`@anthropic-ai/claude-code`)
   - Gemini CLI (`@google/gemini-cli`)
 - ✅ **Ghostty Terminal** configurado como padrão
+- ✅ **Zsh** com Starship prompt e Zoxide
+  - Configuração personalizada do Starship
+  - Aliases úteis para Git e desenvolvimento
+  - Navegação inteligente com Zoxide (`z` command)
+  - Histórico compartilhado e auto-complete
 
 ### Autostart e Favoritos
 - ✅ **Autostart** de aplicações configurado
@@ -125,13 +134,16 @@ O script modifica os seguintes arquivos (sempre criando backups):
 - `~/.XCompose` - Configuração de cedilha
 - `~/.config/gtk-3.0/Compose` - Configuração GTK de cedilha
 - `~/.config/autostart/` - Aplicações no autostart
-- GNOME Settings via `gsettings` (temas, layouts, comportamento)
+- `~/.zshrc` - Configuração do Zsh com Starship e Zoxide
+- `~/.config/starship.toml` - Configuração personalizada do Starship
+- GNOME Settings via `gsettings` (temas, layouts, comportamento, dash-to-dock)
 
 ## 🎨 Aplicativos Instalados
 
 ### Via APT/DEB
 - Google Chrome (repositório oficial)
 - Visual Studio Code (repositório oficial Microsoft)
+- LocalSend (GitHub releases - .deb)
 - HardInfo
 - GNOME Tweaks e Extensions
 - Ferramentas base (curl, wget, git, vim, htop, etc.)
@@ -143,9 +155,10 @@ O script modifica os seguintes arquivos (sempre criando backups):
 - Slack
 
 ### Download Direto
-- JetBrains Toolbox (.tar.gz)
-- Cursor IDE (AppImage)
+- Cursor IDE (AppImage com auto-update)
 - Ghostty Terminal (via script)
+- Starship prompt (cross-shell prompt)
+- Zoxide (smarter cd command)
 
 ## 🧹 Script de Limpeza de Snaps
 
@@ -173,6 +186,16 @@ Certifique-se de:
 1. Verifique se os delays estão adequados para seu sistema
 2. Confira os arquivos em `~/.config/autostart/`
 3. Use `gnome-session-properties` para gerenciar autostart
+
+### Zsh não é o shell padrão após instalação
+1. Execute `chsh -s $(which zsh)` manualmente
+2. Faça logout e login novamente
+3. Verifique com `echo $SHELL` se mudou para zsh
+
+### Starship não aparece
+1. Reinicie o terminal ou execute `source ~/.zshrc`
+2. Verifique se o comando `starship` está disponível
+3. Verifique se o arquivo `~/.config/starship.toml` foi criado
 
 ## 📝 Logs e Backups
 

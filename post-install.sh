@@ -101,6 +101,7 @@ main() {
   print_info "✓ Configurações do sistema aplicadas (terminal padrão, atalhos)"
   print_info "✓ GNOME configurado com extensões e preferências"
   print_info "✓ Autostart configurado"
+  print_info "✓ Zsh configurado com Starship e Zoxide"
   print_info ""
   print_info "Este script é idempotente e pode ser executado novamente se necessário."
   print_info "Backups foram criados para todos os arquivos modificados."
@@ -237,6 +238,12 @@ install_desktop_apps() {
   if command -v mise >/dev/null 2>&1; then
     configure_mise_tools || print_warn "Falha ao configurar ferramentas do Mise"
   fi
+  
+  # Zsh, Starship e Zoxide
+  install_zsh_starship_zoxide || failed_apps+=("Zsh/Starship/Zoxide")
+  
+  # LocalSend
+  install_localsend || failed_apps+=("LocalSend")
   
   if [[ ${#failed_apps[@]} -eq 0 ]]; then
     print_info "Todos os aplicativos desktop foram instalados com sucesso."
@@ -509,6 +516,44 @@ install_jetbrains_ides() {
   fi
 }
 
+check_cursor_needs_update() {
+  # Função silenciosa para verificar se há atualização disponível
+  if [[ ! -f "/opt/cursor/cursor.AppImage" ]]; then
+    return 1  # Precisa instalar
+  fi
+  
+  # Instalar jq silenciosamente se necessário
+  if ! command -v jq >/dev/null 2>&1; then
+    sudo apt install -y jq >/dev/null 2>&1
+  fi
+  
+  local api_url="https://www.cursor.com/api/download?platform=linux-x64&releaseTrack=stable"
+  local user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"
+  
+  # Obter URL da versão mais recente silenciosamente
+  local download_url=$(curl -sL -A "$user_agent" "$api_url" 2>/dev/null | jq -r '.url // .downloadUrl' 2>/dev/null)
+  
+  if [[ -z "$download_url" ]] || [[ "$download_url" == "null" ]]; then
+    return 1  # Não conseguiu verificar, assume que não precisa atualizar
+  fi
+  
+  # Comparar tamanhos sem baixar o arquivo
+  local remote_size=$(curl -sI -L -A "$user_agent" "$download_url" 2>/dev/null | grep -i content-length | awk '{print $2}' | tr -d '\r' 2>/dev/null)
+  local current_size=$(stat -c%s "/opt/cursor/cursor.AppImage" 2>/dev/null || echo "0")
+  
+  # Debug temporário - remover depois
+  echo "DEBUG: URL=$download_url" >&2
+  echo "DEBUG: Remote size=$remote_size, Current size=$current_size" >&2
+  
+  if [[ -n "$remote_size" ]] && [[ "$remote_size" != "0" ]] && [[ "$remote_size" != "$current_size" ]]; then
+    echo "DEBUG: Tamanhos diferentes, precisa atualizar" >&2
+    return 0  # Precisa atualizar (tamanhos diferentes)
+  else
+    echo "DEBUG: Tamanhos iguais ou erro, não precisa atualizar" >&2
+    return 1  # Não precisa atualizar (mesmo tamanho ou erro na verificação)
+  fi
+}
+
 update_cursor() {
   print_info "Verificando atualização do Cursor..."
   
@@ -526,7 +571,7 @@ update_cursor() {
   local user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"
   local temp_appimage="/tmp/cursor-update.AppImage"
   
-  print_info "Obtendo URL da versão mais recente..."
+  print_info "Obtendo informações da versão mais recente..."
   local download_url=$(curl -sL -A "$user_agent" "$api_url" | jq -r '.url // .downloadUrl')
   
   if [[ -z "$download_url" ]] || [[ "$download_url" == "null" ]]; then
@@ -534,9 +579,28 @@ update_cursor() {
     return 1
   fi
   
-  print_info "Baixando nova versão do Cursor..."
+  # Fazer download apenas do header para comparar tamanho sem baixar o arquivo inteiro
+  print_info "Verificando se há nova versão disponível..."
+  local remote_size=$(curl -sI -L -A "$user_agent" "$download_url" | grep -i content-length | awk '{print $2}' | tr -d '\r')
+  local current_size=$(stat -c%s "/opt/cursor/cursor.AppImage" 2>/dev/null || echo "0")
+  
+  if [[ -n "$remote_size" ]] && [[ "$remote_size" == "$current_size" ]]; then
+    print_info "Cursor já está na versão mais recente"
+    return 0
+  fi
+  
+  print_info "Nova versão detectada, baixando atualização..."
   if wget -q --show-progress -O "$temp_appimage" "$download_url"; then
     if [[ -f "$temp_appimage" ]] && file "$temp_appimage" | grep -q "ELF"; then
+      # Verificar novamente após download se realmente é diferente
+      local downloaded_size=$(stat -c%s "$temp_appimage" 2>/dev/null || echo "1")
+      
+      if [[ "$downloaded_size" == "$current_size" ]]; then
+        print_info "Após verificação, versão baixada é igual à atual"
+        rm -f "$temp_appimage"
+        return 0
+      fi
+      
       print_info "Download concluído, atualizando..."
       
       # Backup da versão atual
@@ -598,16 +662,28 @@ if [[ -z "$DOWNLOAD_URL" ]] || [[ "$DOWNLOAD_URL" == "null" ]]; then
   exit 1
 fi
 
+# Verificar se há nova versão antes de baixar
+log "Verificando se há nova versão disponível..."
+REMOTE_SIZE=$(curl -sI -L -A "$USER_AGENT" "$DOWNLOAD_URL" 2>/dev/null | grep -i content-length | awk '{print $2}' | tr -d '\r' 2>/dev/null)
+CURRENT_SIZE=$(stat -c%s "/opt/cursor/cursor.AppImage" 2>/dev/null || echo "0")
+
+if [[ -n "$REMOTE_SIZE" ]] && [[ "$REMOTE_SIZE" != "0" ]] && [[ "$REMOTE_SIZE" == "$CURRENT_SIZE" ]]; then
+  log "Cursor já está na versão mais recente (tamanhos iguais: $REMOTE_SIZE bytes)"
+  exit 0
+elif [[ -z "$REMOTE_SIZE" ]] || [[ "$REMOTE_SIZE" == "0" ]]; then
+  log "Não foi possível obter tamanho do arquivo remoto, pulando verificação"
+  exit 0
+fi
+
 # Baixar nova versão
-log "Verificando atualização do Cursor..."
+log "Nova versão detectada, baixando atualização..."
 if wget -q -O "$TEMP_FILE" "$DOWNLOAD_URL"; then
   if [[ -f "$TEMP_FILE" ]] && file "$TEMP_FILE" | grep -q "ELF"; then
-    # Verificar se é versão diferente (comparar tamanhos)
-    CURRENT_SIZE=$(stat -c%s "/opt/cursor/cursor.AppImage" 2>/dev/null || echo "0")
+    # Verificar novamente após download se realmente é diferente
     NEW_SIZE=$(stat -c%s "$TEMP_FILE" 2>/dev/null || echo "1")
     
-    if [[ "$CURRENT_SIZE" != "$NEW_SIZE" ]]; then
-      log "Nova versão detectada, atualizando..."
+    if [[ "$NEW_SIZE" != "$CURRENT_SIZE" ]]; then
+      log "Atualizando para nova versão..."
       
       # Backup
       cp "/opt/cursor/cursor.AppImage" "/opt/cursor/cursor.AppImage.backup"
@@ -618,7 +694,7 @@ if wget -q -O "$TEMP_FILE" "$DOWNLOAD_URL"; then
       
       log "Cursor atualizado com sucesso!"
     else
-      log "Cursor já está na versão mais recente"
+      log "Após verificação, versão baixada é igual à atual"
       rm -f "$TEMP_FILE"
     fi
   else
@@ -677,9 +753,13 @@ install_cursor() {
     if grep -q "\-\-no-sandbox" /usr/local/bin/cursor 2>/dev/null; then
       print_info "Cursor já está instalado com wrapper correto."
       
-      # Executar update automaticamente se instalação está OK
-      print_info "Cursor instalado corretamente. Verificando atualizações..."
-      update_cursor
+      # Verificar se precisa atualizar antes de declarar que está OK
+      if check_cursor_needs_update; then
+        print_info "Nova versão disponível, atualizando..."
+        update_cursor
+      else
+        print_info "Cursor já está na versão mais recente."
+      fi
       return 0
     else
       print_info "Cursor encontrado, mas wrapper precisa ser atualizado..."
@@ -956,6 +1036,446 @@ configure_mise_tools() {
   command -v gemini >/dev/null 2>&1 && print_info "Gemini CLI: instalado"
   
   return 0
+}
+
+install_zsh_starship_zoxide() {
+  print_info "Instalando e configurando zsh, starship e zoxide..."
+  
+  # Instalar zsh
+  print_info "Instalando zsh..."
+  if ! command -v zsh >/dev/null 2>&1; then
+    sudo apt install -y zsh
+  else
+    print_info "Zsh já está instalado"
+  fi
+  
+  # Instalar starship
+  print_info "Instalando starship..."
+  if ! command -v starship >/dev/null 2>&1; then
+    print_info "Baixando e instalando starship..."
+    curl -sS https://starship.rs/install.sh | sh -s -- --yes
+    
+    if [[ $? -eq 0 ]] && command -v starship >/dev/null 2>&1; then
+      print_info "Starship instalado com sucesso!"
+    else
+      print_warn "Falha ao instalar starship"
+      return 1
+    fi
+  else
+    print_info "Starship já está instalado"
+  fi
+  
+  # Instalar zoxide
+  print_info "Instalando zoxide..."
+  if ! command -v zoxide >/dev/null 2>&1; then
+    print_info "Baixando e instalando zoxide..."
+    curl -sSfL https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | sh
+    
+    if [[ $? -eq 0 ]]; then
+      print_info "Zoxide instalado com sucesso!"
+      # Adicionar zoxide ao PATH se necessário
+      if [[ -f "$HOME/.local/bin/zoxide" ]] && [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
+        echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc"
+        export PATH="$HOME/.local/bin:$PATH"
+      fi
+    else
+      print_warn "Falha ao instalar zoxide"
+      return 1
+    fi
+  else
+    print_info "Zoxide já está instalado"
+  fi
+  
+  # Configurar zsh
+  configure_zsh_config
+  
+  # Oferecer mudança do shell padrão
+  local current_shell=$(basename "$SHELL")
+  if [[ "$current_shell" != "zsh" ]]; then
+    print_info "Configurando zsh como shell padrão..."
+    if command -v zsh >/dev/null 2>&1; then
+      # Adicionar zsh aos shells válidos se não estiver
+      if ! grep -q "$(which zsh)" /etc/shells 2>/dev/null; then
+        which zsh | sudo tee -a /etc/shells >/dev/null
+      fi
+      
+      # Mudar shell padrão
+      chsh -s "$(which zsh)" || print_warn "Não foi possível alterar shell padrão automaticamente"
+      print_info "Shell padrão configurado para zsh"
+      print_warn "Faça logout e login novamente para usar o zsh como shell padrão"
+    fi
+  else
+    print_info "Zsh já é o shell padrão"
+  fi
+  
+  return 0
+}
+
+configure_zsh_config() {
+  print_info "Configurando arquivos de configuração do zsh..."
+  
+  local zshrc_file="$HOME/.zshrc"
+  
+  # Criar backup do .zshrc existente
+  create_backup "$zshrc_file" "zsh-setup"
+  
+  # Configuração básica do zsh
+  cat > "$zshrc_file" << 'EOF'
+# Zsh configuration - Ubuntu Setup
+# History configuration
+HISTFILE=~/.zsh_history
+HISTSIZE=10000
+SAVEHIST=10000
+setopt HIST_VERIFY
+setopt SHARE_HISTORY
+setopt APPEND_HISTORY
+setopt INC_APPEND_HISTORY
+setopt HIST_IGNORE_DUPS
+setopt HIST_IGNORE_ALL_DUPS
+setopt HIST_REDUCE_BLANKS
+setopt HIST_IGNORE_SPACE
+
+# Auto-completion
+autoload -Uz compinit
+compinit
+
+# Case insensitive completion
+zstyle ':completion:*' matcher-list 'm:{a-z}={A-Za-z}'
+zstyle ':completion:*' list-colors "${(s.:.)LS_COLORS}"
+zstyle ':completion:*' menu select
+
+# Directory navigation
+setopt AUTO_CD
+setopt AUTO_PUSHD
+setopt PUSHD_IGNORE_DUPS
+
+# Aliases
+alias ll='ls -alF'
+alias la='ls -A'
+alias l='ls -CF'
+alias grep='grep --color=auto'
+alias fgrep='fgrep --color=auto'
+alias egrep='egrep --color=auto'
+
+# Git aliases
+alias gs='git status'
+alias ga='git add'
+alias gc='git commit'
+alias gp='git push'
+alias gl='git log --oneline'
+alias gd='git diff'
+
+# Zoxide aliases
+alias cd='z'
+
+EOF
+
+  # Adicionar configuração do starship
+  if command -v starship >/dev/null 2>&1; then
+    echo '' >> "$zshrc_file"
+    echo '# Starship prompt' >> "$zshrc_file"
+    echo 'eval "$(starship init zsh)"' >> "$zshrc_file"
+    print_info "Starship adicionado ao .zshrc"
+  fi
+  
+  # Adicionar configuração do zoxide
+  if command -v zoxide >/dev/null 2>&1 || [[ -f "$HOME/.local/bin/zoxide" ]]; then
+    echo '' >> "$zshrc_file"
+    echo '# Zoxide (better cd)' >> "$zshrc_file"
+    echo 'eval "$(zoxide init zsh)"' >> "$zshrc_file"
+    print_info "Zoxide adicionado ao .zshrc"
+  fi
+  
+  # Adicionar configuração do mise se estiver instalado
+  if command -v mise >/dev/null 2>&1; then
+    echo '' >> "$zshrc_file"
+    echo '# Mise (development tools manager)' >> "$zshrc_file"
+    echo 'eval "$(mise activate zsh)"' >> "$zshrc_file"
+    print_info "Mise adicionado ao .zshrc"
+  fi
+  
+  # Criar configuração personalizada do starship
+  create_starship_config
+  
+  print_info "Configuração do zsh criada em $zshrc_file"
+}
+
+create_starship_config() {
+  if ! command -v starship >/dev/null 2>&1; then
+    return 0
+  fi
+  
+  print_info "Criando configuração personalizada do starship..."
+  
+  local starship_config="$HOME/.config/starship.toml"
+  mkdir -p "$HOME/.config"
+  
+  # Criar backup da configuração existente
+  create_backup "$starship_config" "starship-setup"
+  
+  cat > "$starship_config" << 'EOF'
+# Starship configuration - Ubuntu Setup
+format = """
+[](#9A348E)\
+$os\
+$username\
+[](bg:#DA627D fg:#9A348E)\
+$directory\
+[](fg:#DA627D bg:#FCA17D)\
+$git_branch\
+$git_status\
+[](fg:#FCA17D bg:#86BBD8)\
+$c\
+$elixir\
+$elm\
+$golang\
+$gradle\
+$haskell\
+$java\
+$julia\
+$nodejs\
+$nim\
+$rust\
+$scala\
+$python\
+$dotnet\
+[](fg:#86BBD8 bg:#06969A)\
+$docker_context\
+[](fg:#06969A bg:#33658A)\
+$time\
+[ ](fg:#33658A)\
+"""
+
+# Disable the blank line at the start of the prompt
+# add_newline = false
+
+# You can also replace your username with a neat symbol like   or disable it
+[username]
+show_always = true
+style_user = "bg:#9A348E"
+style_root = "bg:#9A348E"
+format = '[$user ]($style)'
+disabled = false
+
+# An alternative to the username module which displays a symbol that
+# represents the current operating system
+[os]
+style = "bg:#9A348E"
+disabled = true # Disabled by default
+
+[directory]
+style = "bg:#DA627D"
+format = "[ $path ]($style)"
+truncation_length = 3
+truncation_symbol = "…/"
+
+# Here is how you can shorten some long paths by text replacement
+# similar to mapped_locations in Oh My Posh:
+[directory.substitutions]
+"Documents" = "󰈙 "
+"Downloads" = " "
+"Music" = " "
+"Pictures" = " "
+# Keep in mind that the order matters. For example:
+# "Important Documents" = " 󰈙 "
+# will not be replaced, because "Documents" was already substituted before.
+# So either put "Important Documents" before "Documents" or use the substituted version:
+# "Important 󰈙 " = " 󰈙 "
+
+[c]
+symbol = " "
+style = "bg:#86BBD8"
+format = '[ $symbol ($version) ]($style)'
+
+[docker_context]
+symbol = " "
+style = "bg:#06969A"
+format = '[ $symbol $context ]($style) $path'
+
+[elixir]
+symbol = " "
+style = "bg:#86BBD8"
+format = '[ $symbol ($version) ]($style)'
+
+[elm]
+symbol = " "
+style = "bg:#86BBD8"
+format = '[ $symbol ($version) ]($style)'
+
+[git_branch]
+symbol = ""
+style = "bg:#FCA17D"
+format = '[ $symbol $branch ]($style)'
+
+[git_status]
+style = "bg:#FCA17D"
+format = '[$all_status$ahead_behind ]($style)'
+
+[golang]
+symbol = " "
+style = "bg:#86BBD8"
+format = '[ $symbol ($version) ]($style)'
+
+[gradle]
+style = "bg:#86BBD8"
+format = '[ $symbol ($version) ]($style)'
+
+[haskell]
+symbol = " "
+style = "bg:#86BBD8"
+format = '[ $symbol ($version) ]($style)'
+
+[java]
+symbol = " "
+style = "bg:#86BBD8"
+format = '[ $symbol ($version) ]($style)'
+
+[julia]
+symbol = " "
+style = "bg:#86BBD8"
+format = '[ $symbol ($version) ]($style)'
+
+[nodejs]
+symbol = ""
+style = "bg:#86BBD8"
+format = '[ $symbol ($version) ]($style)'
+
+[nim]
+symbol = "󰆥 "
+style = "bg:#86BBD8"
+format = '[ $symbol ($version) ]($style)'
+
+[rust]
+symbol = ""
+style = "bg:#86BBD8"
+format = '[ $symbol ($version) ]($style)'
+
+[scala]
+symbol = " "
+style = "bg:#86BBD8"
+format = '[ $symbol ($version) ]($style)'
+
+[python]
+symbol = " "
+style = "bg:#86BBD8"
+format = '[ $symbol ($version) ]($style)'
+
+[dotnet]
+symbol = "󰪮 "
+style = "bg:#86BBD8"
+format = '[ $symbol ($version) ]($style)'
+
+[time]
+disabled = false
+time_format = "%R" # Hour:Minute Format
+style = "bg:#33658A"
+format = '[ ♥ $time ]($style)'
+EOF
+
+  print_info "Configuração personalizada do starship criada em $starship_config"
+}
+
+install_localsend() {
+  if command -v localsend >/dev/null 2>&1 || dpkg -s localsend &> /dev/null; then
+    print_info "LocalSend já está instalado."
+    return 0
+  fi
+  
+  print_info "Instalando LocalSend..."
+  
+  # Detectar arquitetura
+  local arch=$(dpkg --print-architecture)
+  local localsend_arch=""
+  
+  case "$arch" in
+    amd64)
+      localsend_arch="x86-64"
+      ;;
+    arm64)
+      localsend_arch="arm-64"
+      ;;
+    *)
+      print_warn "Arquitetura $arch não suportada pelo LocalSend"
+      return 1
+      ;;
+  esac
+  
+  # Instalar jq se necessário
+  if ! command -v jq >/dev/null 2>&1; then
+    sudo apt install -y jq
+  fi
+  
+  local api_url="https://api.github.com/repos/localsend/localsend/releases/latest"
+  local temp_deb="/tmp/localsend.deb"
+  local max_retries=3
+  
+  for attempt in $(seq 1 $max_retries); do
+    print_info "Tentativa $attempt/$max_retries para baixar LocalSend..."
+    
+    # Obter informações da versão mais recente
+    print_info "Obtendo informações da versão mais recente..."
+    local release_info=$(curl -sL "$api_url")
+    
+    if [[ -z "$release_info" ]]; then
+      print_warn "Falha ao obter informações do release"
+      if [[ $attempt -lt $max_retries ]]; then
+        sleep 3
+        continue
+      else
+        return 1
+      fi
+    fi
+    
+    # Extrair URL de download para a arquitetura correta
+    local download_url=$(echo "$release_info" | jq -r ".assets[] | select(.name | contains(\"linux-${localsend_arch}.deb\")) | .browser_download_url")
+    
+    if [[ -z "$download_url" ]] || [[ "$download_url" == "null" ]]; then
+      print_warn "Não foi possível encontrar arquivo .deb para arquitetura $localsend_arch"
+      if [[ $attempt -lt $max_retries ]]; then
+        sleep 3
+        continue
+      else
+        return 1
+      fi
+    fi
+    
+    print_info "Baixando LocalSend de: $download_url"
+    if wget -q --show-progress -O "$temp_deb" "$download_url"; then
+      if [[ -f "$temp_deb" ]] && file "$temp_deb" | grep -q "Debian binary package"; then
+        print_info "Download concluído, instalando LocalSend..."
+        
+        if sudo dpkg -i "$temp_deb" 2>/dev/null || sudo apt install -f -y; then
+          print_info "LocalSend instalado com sucesso!"
+          rm -f "$temp_deb"
+          
+          # Verificar instalação
+          if command -v localsend >/dev/null 2>&1; then
+            local version=$(dpkg -s localsend 2>/dev/null | grep "^Version:" | cut -d' ' -f2)
+            print_info "LocalSend versão $version instalado"
+          fi
+          
+          return 0
+        else
+          print_warn "Falha ao instalar pacote .deb do LocalSend"
+          rm -f "$temp_deb"
+        fi
+      else
+        print_warn "Arquivo baixado não é um .deb válido"
+        rm -f "$temp_deb"
+      fi
+    else
+      print_warn "Falha ao baixar LocalSend"
+    fi
+    
+    if [[ $attempt -lt $max_retries ]]; then
+      print_warn "Tentativa $attempt falhou, tentando novamente em 3s..."
+      sleep 3
+    fi
+  done
+  
+  print_warn "Falha ao instalar LocalSend após $max_retries tentativas"
+  print_info "Você pode tentar instalar manualmente em: https://github.com/localsend/localsend/releases/latest"
+  return 1
 }
 
 # Placeholder para as demais funções
@@ -1246,13 +1766,8 @@ configure_gnome_settings() {
   # Mostrar ícones na área de trabalho
   gsettings set org.gnome.desktop.background show-desktop-icons true
   
-  # Configurações do dock (se disponível)
-  if gsettings list-schemas | grep -q "org.gnome.shell.extensions.dash-to-dock"; then
-    gsettings set org.gnome.shell.extensions.dash-to-dock dock-position 'BOTTOM'
-    gsettings set org.gnome.shell.extensions.dash-to-dock dash-max-icon-size 48
-    gsettings set org.gnome.shell.extensions.dash-to-dock show-favorites true
-    print_info "Dash-to-dock configurado"
-  fi
+  # Configurações do dash-to-dock (se disponível)
+  configure_dash_to_dock
   
   # Touchpad
   print_info "Configurando touchpad..."
@@ -1280,6 +1795,79 @@ configure_gnome_settings() {
   gsettings set org.gnome.nautilus.list-view use-tree-view true
   
   print_info "Configurações do GNOME aplicadas com sucesso!"
+}
+
+configure_dash_to_dock() {
+  print_info "Configurando dash-to-dock..."
+  
+  # Verificar se dash-to-dock está disponível
+  if ! gsettings list-schemas | grep -q "org.gnome.shell.extensions.dash-to-dock"; then
+    print_warn "Dash-to-dock não está instalado, pulando configuração"
+    return 0
+  fi
+  
+  # Habilitar a extensão primeiro
+  if command -v gnome-extensions >/dev/null 2>&1; then
+    if gnome-extensions list | grep -q "dash-to-dock@micxgx.gmail.com"; then
+      gnome-extensions enable "dash-to-dock@micxgx.gmail.com" 2>/dev/null || true
+      print_info "Dash-to-dock habilitado"
+    fi
+  fi
+  
+  # Configurações de posicionamento
+  print_info "Configurando posição: parte inferior da tela"
+  gsettings set org.gnome.shell.extensions.dash-to-dock dock-position 'BOTTOM'
+  gsettings set org.gnome.shell.extensions.dash-to-dock preferred-monitor -1  # Monitor primário
+  
+  # Configurações de auto hide
+  print_info "Configurando auto hide..."
+  gsettings set org.gnome.shell.extensions.dash-to-dock dock-fixed false  # Permite auto hide
+  gsettings set org.gnome.shell.extensions.dash-to-dock autohide true     # Ativa auto hide
+  gsettings set org.gnome.shell.extensions.dash-to-dock intellihide false # Desativa intellihide (conflita com autohide)
+  
+  # Configurações de comportamento do auto hide
+  gsettings set org.gnome.shell.extensions.dash-to-dock autohide-in-fullscreen true  # Hide em fullscreen
+  gsettings set org.gnome.shell.extensions.dash-to-dock require-pressure-to-show true  # Pressão para mostrar
+  gsettings set org.gnome.shell.extensions.dash-to-dock pressure-threshold 100.0      # Limite de pressão
+  gsettings set org.gnome.shell.extensions.dash-to-dock animation-time 0.2            # Tempo de animação
+  gsettings set org.gnome.shell.extensions.dash-to-dock hide-delay 0.2                # Delay para esconder
+  gsettings set org.gnome.shell.extensions.dash-to-dock show-delay 0.25               # Delay para mostrar
+  
+  # Configurações de aparência
+  print_info "Configurando aparência do dock..."
+  gsettings set org.gnome.shell.extensions.dash-to-dock dash-max-icon-size 48        # Tamanho dos ícones
+  gsettings set org.gnome.shell.extensions.dash-to-dock icon-size-fixed true         # Tamanho fixo dos ícones
+  gsettings set org.gnome.shell.extensions.dash-to-dock show-favorites true          # Mostrar favoritos
+  gsettings set org.gnome.shell.extensions.dash-to-dock show-running true            # Mostrar aplicações em execução
+  gsettings set org.gnome.shell.extensions.dash-to-dock show-apps-at-top false       # Apps button no final
+  
+  # Configurações de transparência e estilo
+  gsettings set org.gnome.shell.extensions.dash-to-dock transparency-mode 'DYNAMIC'  # Transparência dinâmica
+  gsettings set org.gnome.shell.extensions.dash-to-dock background-opacity 0.8       # Opacidade de fundo
+  gsettings set org.gnome.shell.extensions.dash-to-dock customize-alphas true        # Personalizar transparência
+  gsettings set org.gnome.shell.extensions.dash-to-dock min-alpha 0.4                # Transparência mínima
+  gsettings set org.gnome.shell.extensions.dash-to-dock max-alpha 0.8                # Transparência máxima
+  
+  # Configurações de comportamento
+  gsettings set org.gnome.shell.extensions.dash-to-dock click-action 'TOGGLE'        # Clique para alternar janelas
+  gsettings set org.gnome.shell.extensions.dash-to-dock scroll-action 'DO_NOTHING'   # Scroll não faz nada
+  gsettings set org.gnome.shell.extensions.dash-to-dock middle-click-action 'LAUNCH' # Clique do meio abre nova instância
+  
+  # Configurações de multi-monitor
+  gsettings set org.gnome.shell.extensions.dash-to-dock multi-monitor false          # Apenas no monitor principal
+  
+  # Configurações de altura e tamanho
+  gsettings set org.gnome.shell.extensions.dash-to-dock height-fraction 0.9          # 90% da altura da tela
+  gsettings set org.gnome.shell.extensions.dash-to-dock dock-fixed false             # Tamanho dinâmico
+  
+  print_info "Dash-to-dock configurado:"
+  print_info "- Posição: Parte inferior da tela"
+  print_info "- Auto hide: Ativado com pressão para mostrar"
+  print_info "- Transparência: Dinâmica"
+  print_info "- Tamanho dos ícones: 48px"
+  print_info "- Clique: Alterna entre janelas"
+  
+  print_warn "Reinicie o GNOME Shell (Alt+F2, digite 'r', Enter) ou faça logout/login para aplicar todas as mudanças"
 }
 
 configure_gnome_extensions() {
@@ -1380,7 +1968,7 @@ EOF
   
   # Configurar aplicações favoritas no dock
   print_info "Configurando aplicações favoritas..."
-  local favorites="['org.gnome.Nautilus.desktop', 'google-chrome.desktop', 'code.desktop', 'org.gnome.Terminal.desktop', 'rider_rider.desktop', 'datagrip_datagrip.desktop', 'io.missioncenter.MissionCenter.desktop', 'com.getpostman.Postman.desktop', 'slack.desktop', 'discord.desktop', 'com.rtosta.zapzap.desktop']"
+  local favorites="['org.gnome.Nautilus.desktop', 'google-chrome.desktop', 'code.desktop', 'org.gnome.Terminal.desktop', 'rider_rider.desktop', 'datagrip_datagrip.desktop', 'io.missioncenter.MissionCenter.desktop', 'com.getpostman.Postman.desktop', 'slack.desktop', 'discord.desktop', 'com.rtosta.zapzap.desktop', 'localsend_app.desktop']"
   gsettings set org.gnome.shell favorite-apps "$favorites"
   
   print_info "Autostart configurado para aplicações selecionadas."
