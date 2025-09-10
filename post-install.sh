@@ -344,6 +344,17 @@ install_desktop_apps() {
   # Lazygit
   install_lazygit || failed_apps+=("Lazygit")
   
+  # Neovim
+  install_neovim || failed_apps+=("Neovim")
+  
+  # LazyVim (depends on Neovim)
+  if command -v nvim >/dev/null 2>&1; then
+    install_lazyvim || failed_apps+=("LazyVim")
+  else
+    print_warn "LazyVim não foi instalado (Neovim não disponível)"
+    failed_apps+=("LazyVim")
+  fi
+  
   if [[ ${#failed_apps[@]} -eq 0 ]]; then
     print_info "Todos os aplicativos desktop foram instalados com sucesso."
   else
@@ -1823,6 +1834,12 @@ install_lazygit() {
     aarch64|arm64)
       lazygit_arch="arm64"
       ;;
+    i386|i686)
+      lazygit_arch="32-bit"
+      ;;
+    armv6l)
+      lazygit_arch="armv6"
+      ;;
     *)
       print_warn "Arquitetura $arch não suportada pelo Lazygit"
       return 1
@@ -1846,7 +1863,7 @@ install_lazygit() {
     fi
     
     # Extrair URL de download para a arquitetura correta
-    local download_url=$(echo "$release_info" | jq -r ".assets[] | select(.name | contains(\"Linux_${lazygit_arch}.tar.gz\")) | .browser_download_url")
+    local download_url=$(echo "$release_info" | jq -r ".assets[] | select(.name | contains(\"linux_${lazygit_arch}.tar.gz\")) | .browser_download_url")
     
     if [[ -z "$download_url" ]] || [[ "$download_url" == "null" ]]; then
       print_warn "Não foi possível encontrar arquivo para arquitetura $lazygit_arch"
@@ -1901,6 +1918,97 @@ install_lazygit() {
   print_warn "Falha ao instalar Lazygit após $max_retries tentativas"
   print_info "Você pode tentar instalar manualmente em: https://github.com/jesseduffield/lazygit/releases/latest"
   return 1
+}
+
+install_neovim() {
+  if command -v nvim >/dev/null 2>&1; then
+    print_info "Neovim já está instalado."
+    local version=$(nvim --version | head -n1 | cut -d' ' -f2)
+    print_info "Versão atual: $version"
+    return 0
+  fi
+
+  print_info "Instalando Neovim via PPA oficial..."
+  
+  # Adicionar PPA estável do Neovim
+  if sudo add-apt-repository ppa:neovim-ppa/stable -y 2>/dev/null; then
+    print_info "PPA do Neovim adicionado com sucesso"
+  else
+    print_warn "Falha ao adicionar PPA, tentando repositório padrão"
+    sudo apt update
+    sudo apt install -y neovim
+    return $?
+  fi
+  
+  # Atualizar repositórios e instalar
+  sudo apt update
+  sudo apt install -y neovim
+  
+  # Verificar instalação
+  if command -v nvim >/dev/null 2>&1; then
+    local version=$(nvim --version | head -n1 | cut -d' ' -f2)
+    print_info "Neovim versão $version instalado com sucesso!"
+    return 0
+  else
+    print_warn "Falha ao instalar Neovim"
+    return 1
+  fi
+}
+
+install_lazyvim() {
+  if [[ ! -x "$(command -v nvim)" ]]; then
+    print_warn "Neovim não está instalado. Execute install_neovim() primeiro."
+    return 1
+  fi
+
+  local nvim_config_dir="$HOME/.config/nvim"
+  local backup_suffix=$(date +%Y%m%d%H%M%S)
+  
+  print_info "Configurando LazyVim..."
+  
+  # Backup da configuração existente se houver
+  if [[ -d "$nvim_config_dir" ]]; then
+    print_info "Fazendo backup da configuração existente do Neovim..."
+    
+    # Backup de todos os diretórios relacionados ao Neovim
+    [[ -d "$HOME/.config/nvim" ]] && mv "$HOME/.config/nvim" "$HOME/.config/nvim.bak.$backup_suffix"
+    [[ -d "$HOME/.local/share/nvim" ]] && mv "$HOME/.local/share/nvim" "$HOME/.local/share/nvim.bak.$backup_suffix"
+    [[ -d "$HOME/.local/state/nvim" ]] && mv "$HOME/.local/state/nvim" "$HOME/.local/state/nvim.bak.$backup_suffix"
+    [[ -d "$HOME/.cache/nvim" ]] && mv "$HOME/.cache/nvim" "$HOME/.cache/nvim.bak.$backup_suffix"
+    
+    print_info "Backup criado com sufixo: $backup_suffix"
+  fi
+  
+  # Clonar starter template do LazyVim
+  print_info "Clonando LazyVim starter template..."
+  if git clone https://github.com/LazyVim/starter "$nvim_config_dir" 2>/dev/null; then
+    print_info "LazyVim starter clonado com sucesso"
+  else
+    print_warn "Falha ao clonar LazyVim starter"
+    return 1
+  fi
+  
+  # Remover .git do template
+  rm -rf "$nvim_config_dir/.git"
+  
+  # Verificar se a configuração foi criada
+  if [[ -f "$nvim_config_dir/init.lua" ]]; then
+    print_info "LazyVim configurado com sucesso!"
+    print_info "IMPORTANTE: Execute 'nvim' e aguarde a instalação automática dos plugins"
+    print_info "Após a instalação, execute ':LazyHealth' para verificar a configuração"
+    
+    # Criar um script de first-run para instalar plugins automaticamente
+    cat > "$nvim_config_dir/first-run.lua" << 'EOF'
+-- First run script to install plugins automatically
+vim.cmd("Lazy! sync")
+print("LazyVim plugins instalados! Execute :LazyHealth para verificar.")
+EOF
+    
+    return 0
+  else
+    print_warn "Falha ao configurar LazyVim"
+    return 1
+  fi
 }
 
 # Placeholder para as demais funções
