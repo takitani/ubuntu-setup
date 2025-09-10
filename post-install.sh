@@ -371,12 +371,70 @@ EOF
   rm -rf "$temp_dir"
 }
 
+update_cursor() {
+  print_info "Verificando atualização do Cursor..."
+  
+  if [[ ! -f "/opt/cursor/cursor.AppImage" ]]; then
+    print_warn "Cursor não está instalado. Execute install_cursor() primeiro."
+    return 1
+  fi
+  
+  # Instalar dependências se necessário
+  if ! command -v jq >/dev/null 2>&1; then
+    sudo apt install -y jq
+  fi
+  
+  local api_url="https://www.cursor.com/api/download?platform=linux-x64&releaseTrack=stable"
+  local user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"
+  local temp_appimage="/tmp/cursor-update.AppImage"
+  
+  print_info "Obtendo URL da versão mais recente..."
+  local download_url=$(curl -sL -A "$user_agent" "$api_url" | jq -r '.url // .downloadUrl')
+  
+  if [[ -z "$download_url" ]] || [[ "$download_url" == "null" ]]; then
+    print_warn "Não foi possível obter URL da API do Cursor para atualização"
+    return 1
+  fi
+  
+  print_info "Baixando nova versão do Cursor..."
+  if wget -q --show-progress -O "$temp_appimage" "$download_url"; then
+    if [[ -f "$temp_appimage" ]] && file "$temp_appimage" | grep -q "ELF"; then
+      print_info "Download concluído, atualizando..."
+      
+      # Backup da versão atual
+      sudo cp "/opt/cursor/cursor.AppImage" "/opt/cursor/cursor.AppImage.backup" 2>/dev/null || true
+      
+      # Substituir AppImage
+      sudo mv "$temp_appimage" "/opt/cursor/cursor.AppImage"
+      sudo chmod +x "/opt/cursor/cursor.AppImage"
+      
+      print_info "Cursor atualizado com sucesso!"
+      print_info "Feche e reabra o Cursor para usar a nova versão"
+      
+      return 0
+    else
+      print_warn "Arquivo baixado não é um AppImage válido"
+      rm -f "$temp_appimage"
+      return 1
+    fi
+  else
+    print_warn "Falha ao baixar atualização do Cursor"
+    return 1
+  fi
+}
+
 install_cursor() {
   # Verificar se Cursor está instalado E se tem o wrapper correto
   if [[ -f "/usr/local/bin/cursor" ]] && [[ -f "/opt/cursor/cursor.AppImage" ]]; then
     # Verificar se o wrapper tem --no-sandbox
     if grep -q "\-\-no-sandbox" /usr/local/bin/cursor 2>/dev/null; then
       print_info "Cursor já está instalado com wrapper correto."
+      
+      # Oferecer opção de atualizar
+      read -p "Deseja verificar atualizações? (s/n): " check_update
+      if [[ "$check_update" =~ ^[Ss]$ ]]; then
+        update_cursor
+      fi
       return 0
     else
       print_info "Cursor encontrado, mas wrapper precisa ser atualizado..."
