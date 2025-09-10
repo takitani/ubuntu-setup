@@ -1,20 +1,25 @@
-# Ubuntu Setup - Ubuntu 25 + GNOME Post-Install Script
+# 🚀 Ubuntu Setup - Ubuntu 25 + GNOME Post-Install Script
+
+[![Ubuntu](https://img.shields.io/badge/Ubuntu-25.04-E95420?style=for-the-badge&logo=ubuntu&logoColor=white)](https://ubuntu.com)
+[![GNOME](https://img.shields.io/badge/GNOME-47+-4A86CF?style=for-the-badge&logo=gnome&logoColor=white)](https://www.gnome.org)
+[![Bash](https://img.shields.io/badge/Bash-5.0+-4EAA25?style=for-the-badge&logo=gnu-bash&logoColor=white)](https://www.gnu.org/software/bash/)
+[![License](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](LICENSE)
 
 Script de pós-instalação automatizado para Ubuntu 25 com GNOME, otimizado para configuração brasileira com interface em inglês.
 
-## 🚀 Execução Rápida (Remota)
+## ⚡ Execução Rápida (Remota)
 
-Execute o script diretamente sem clonar o repositório:
+Execute o script diretamente do GitHub sem clonar o repositório:
 
 ```bash
-# Via curl
-bash <(curl -fsSL https://raw.githubusercontent.com/usuario/ubuntu-setup/main/post-install.sh)
+# Via curl (recomendado)
+bash <(curl -fsSL https://raw.githubusercontent.com/takitani/ubuntu-setup/main/post-install.sh)
 
 # Via wget
-bash <(wget -qO- https://raw.githubusercontent.com/usuario/ubuntu-setup/main/post-install.sh)
+bash <(wget -qO- https://raw.githubusercontent.com/takitani/ubuntu-setup/main/post-install.sh)
 
 # Com opções (exemplo: sem Flatpak)
-bash <(curl -fsSL https://raw.githubusercontent.com/usuario/ubuntu-setup/main/post-install.sh) --no-flatpak
+bash <(curl -fsSL https://raw.githubusercontent.com/takitani/ubuntu-setup/main/post-install.sh) --no-flatpak
 ```
 
 ## 📦 O que o script faz
@@ -56,6 +61,16 @@ bash <(curl -fsSL https://raw.githubusercontent.com/usuario/ubuntu-setup/main/po
   - System Monitor
   - User Themes
 
+### Ferramentas de Desenvolvimento
+- ✅ **Mise** para gerenciamento de versões
+- ✅ **Node.js LTS** instalado via Mise
+- ✅ **.NET 9** instalado via Mise
+- ✅ **CLIs de IA** instalados:
+  - Codex CLI (`@openai/codex`)
+  - Claude CLI (`@anthropic/claude-cli`)
+  - Gemini CLI (`@google/gemini-cli`)
+- ✅ **Ghostty Terminal** configurado como padrão
+
 ### Autostart e Favoritos
 - ✅ **Autostart** de aplicações configurado
 - ✅ **Aplicações favoritas** no dock configuradas
@@ -65,7 +80,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/usuario/ubuntu-setup/main/po
 
 ```bash
 # Clone o repositório
-git clone https://github.com/usuario/ubuntu-setup.git
+git clone https://github.com/takitani/ubuntu-setup.git
 cd ubuntu-setup
 
 # Torne o script executável
@@ -129,7 +144,17 @@ O script modifica os seguintes arquivos (sempre criando backups):
 
 ### Download Direto
 - JetBrains Toolbox (.tar.gz)
-- Cursor IDE (.deb)
+- Cursor IDE (AppImage)
+- Ghostty Terminal (via script)
+
+## 🧹 Script de Limpeza de Snaps
+
+Inclui script adicional para limpar snaps desnecessários:
+
+```bash
+# Execute para limpar loops do snap
+./clean-snaps.sh
+```
 
 ## 🐛 Solução de Problemas
 

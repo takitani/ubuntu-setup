@@ -94,6 +94,12 @@ main() {
 update_system() {
   print_step "Atualizando o sistema"
   
+  # Modernizar formato dos sources para o novo padrão do Ubuntu
+  print_info "Modernizando formato dos repositórios APT..."
+  if command -v apt >/dev/null 2>&1 && apt --version 2>&1 | grep -q "apt 2."; then
+    sudo apt modernize-sources -y 2>/dev/null || print_warn "apt modernize-sources não disponível ou já modernizado"
+  fi
+  
   print_info "Atualizando lista de pacotes..."
   sudo apt update
   
@@ -345,22 +351,48 @@ install_cursor() {
   fi
   
   print_info "Instalando Cursor IDE..."
-  local cursor_url="https://downloader.cursor.sh/linux/deb/x64"
-  local temp_file="/tmp/cursor.deb"
+  local temp_file="/tmp/cursor.AppImage"
+  local install_dir="/opt/cursor"
   local max_retries=3
   
+  # Tentar baixar o AppImage primeiro (mais confiável)
+  local cursor_appimage_url="https://downloader.cursor.sh/linux/appImage/x64"
+  
   for attempt in $(seq 1 $max_retries); do
-    print_info "Tentativa $attempt/$max_retries para baixar Cursor..."
-    if wget -O "$temp_file" "$cursor_url" 2>/dev/null; then
-      if sudo dpkg -i "$temp_file" 2>/dev/null; then
+    print_info "Tentativa $attempt/$max_retries para baixar Cursor AppImage..."
+    
+    if wget -O "$temp_file" "$cursor_appimage_url" 2>/dev/null && [[ -f "$temp_file" ]]; then
+      # Verificar se é um AppImage válido
+      if file "$temp_file" | grep -q "ELF"; then
+        print_info "Instalando Cursor AppImage..."
+        
+        # Criar diretório e instalar
+        sudo mkdir -p "$install_dir"
+        sudo cp "$temp_file" "$install_dir/cursor"
+        sudo chmod +x "$install_dir/cursor"
+        
+        # Criar link simbólico
+        sudo ln -sf "$install_dir/cursor" /usr/local/bin/cursor
+        
+        # Criar desktop entry
+        sudo tee /usr/share/applications/cursor.desktop > /dev/null <<EOF
+[Desktop Entry]
+Name=Cursor
+Exec=/opt/cursor/cursor %F
+Terminal=false
+Type=Application
+Icon=cursor
+StartupWMClass=Cursor
+Comment=AI-powered code editor
+Categories=Development;IDE;
+MimeType=text/plain;
+EOF
+        
         print_info "Cursor instalado com sucesso!"
         rm -f "$temp_file"
         return 0
       else
-        print_info "Instalando dependências do Cursor..."
-        sudo apt install -f -y
-        rm -f "$temp_file"
-        return 0
+        print_warn "Arquivo baixado não é um AppImage válido"
       fi
     fi
     
@@ -371,6 +403,7 @@ install_cursor() {
   done
   
   print_warn "Falha ao instalar Cursor após $max_retries tentativas"
+  print_info "Você pode baixar manualmente em: https://cursor.com/downloads"
   rm -f "$temp_file"
   return 1
 }
@@ -382,22 +415,40 @@ install_ghostty() {
   fi
   
   print_info "Instalando Ghostty Terminal..."
+  
+  # Verificar se curl está disponível
+  if ! command -v curl >/dev/null 2>&1; then
+    print_warn "curl não encontrado, instalando..."
+    sudo apt install -y curl
+  fi
+  
   local max_retries=3
   
   for attempt in $(seq 1 $max_retries); do
     print_info "Tentativa $attempt/$max_retries para instalar Ghostty..."
-    if /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mkasberg/ghostty-ubuntu/HEAD/install.sh)" 2>/dev/null; then
-      print_info "Ghostty instalado com sucesso!"
-      
-      # Configurar como terminal padrão
-      if command -v ghostty >/dev/null 2>&1; then
-        print_info "Configurando Ghostty como terminal padrão..."
-        gsettings set org.gnome.desktop.default-applications.terminal exec 'ghostty'
-        gsettings set org.gnome.desktop.default-applications.terminal exec-arg ''
-        print_info "Ghostty configurado como terminal padrão"
+    
+    # Baixar e executar script de instalação com melhor tratamento de erro
+    local temp_script="/tmp/ghostty_install.sh"
+    if curl -fsSL -o "$temp_script" https://raw.githubusercontent.com/mkasberg/ghostty-ubuntu/HEAD/install.sh 2>/dev/null; then
+      if [[ -f "$temp_script" ]] && bash "$temp_script"; then
+        print_info "Ghostty instalado com sucesso!"
+        rm -f "$temp_script"
+        
+        # Configurar como terminal padrão
+        if command -v ghostty >/dev/null 2>&1; then
+          print_info "Configurando Ghostty como terminal padrão..."
+          gsettings set org.gnome.desktop.default-applications.terminal exec 'ghostty' || true
+          gsettings set org.gnome.desktop.default-applications.terminal exec-arg '' || true
+          print_info "Ghostty configurado como terminal padrão"
+        fi
+        
+        return 0
+      else
+        print_warn "Script de instalação do Ghostty falhou"
+        rm -f "$temp_script"
       fi
-      
-      return 0
+    else
+      print_warn "Não foi possível baixar o script de instalação do Ghostty"
     fi
     
     if [[ $attempt -lt $max_retries ]]; then
@@ -407,6 +458,7 @@ install_ghostty() {
   done
   
   print_warn "Falha ao instalar Ghostty após $max_retries tentativas"
+  print_info "Você pode tentar instalar manualmente: https://github.com/mkasberg/ghostty-ubuntu"
   return 1
 }
 
@@ -458,6 +510,37 @@ configure_mise_tools() {
   print_info "Instalando Node.js LTS via Mise..."
   if mise install node@lts 2>/dev/null && mise global node@lts 2>/dev/null; then
     print_info "Node.js LTS instalado e configurado como global"
+    
+    # Instalar CLIs de IA após configurar Node.js
+    if command -v npm >/dev/null 2>&1; then
+      print_info "Instalando CLIs de IA..."
+      
+      # Codex CLI
+      print_info "Instalando Codex CLI..."
+      if npm install -g @openai/codex 2>/dev/null; then
+        print_info "Codex CLI instalado com sucesso"
+      else
+        print_warn "Falha ao instalar Codex CLI"
+      fi
+      
+      # Claude CLI (assumindo que existe um pacote oficial)
+      print_info "Instalando Claude CLI..."
+      if npm install -g @anthropic/claude-cli 2>/dev/null; then
+        print_info "Claude CLI instalado com sucesso"
+      else
+        print_warn "Falha ao instalar Claude CLI (pacote pode não existir ainda)"
+      fi
+      
+      # Gemini CLI
+      print_info "Instalando Gemini CLI..."
+      if npm install -g @google/gemini-cli 2>/dev/null; then
+        print_info "Gemini CLI instalado com sucesso"
+      else
+        print_warn "Falha ao instalar Gemini CLI"
+      fi
+    else
+      print_warn "npm não encontrado, pulando instalação de CLIs de IA"
+    fi
   else
     print_warn "Falha ao instalar Node.js LTS"
   fi
@@ -481,6 +564,12 @@ configure_mise_tools() {
     local dotnet_version=$(dotnet --version 2>/dev/null || echo "erro")
     print_info ".NET: $dotnet_version"
   fi
+  
+  # Verificar CLIs de IA instalados
+  print_info "Verificando CLIs de IA..."
+  command -v codex >/dev/null 2>&1 && print_info "Codex CLI: instalado"
+  command -v claude >/dev/null 2>&1 && print_info "Claude CLI: instalado"
+  command -v gemini >/dev/null 2>&1 && print_info "Gemini CLI: instalado"
   
   return 0
 }
