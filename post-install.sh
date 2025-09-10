@@ -1094,6 +1094,61 @@ configure_system_settings() {
     print_warn "Ghostty não encontrado, pulando configuração de terminal padrão"
   fi
   
+  # Configurar atalhos customizados para aplicações
+  print_info "Configurando atalhos de teclado customizados..."
+  
+  # Obter lista atual de custom keybindings
+  local current_keybindings=($(gsettings get org.gnome.settings-daemon.plugins.media-keys custom-keybindings | tr -d "[']" | tr ',' '\n' | tr -d ' '))
+  local new_keybindings=()
+  
+  # Se já existe o atalho do Ghostty, incluir na lista
+  if [[ " ${current_keybindings[@]} " =~ " /org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom0/ " ]]; then
+    new_keybindings+=("/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom0/")
+  fi
+  
+  # Super+F - Abrir File Manager
+  local custom1_path="/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom1/"
+  new_keybindings+=("${custom1_path}")
+  gsettings set "org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:${custom1_path}" name "Open File Manager" || true
+  gsettings set "org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:${custom1_path}" command "nautilus" || true
+  gsettings set "org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:${custom1_path}" binding "<Super>f" || true
+  
+  # Super+Shift+F - Nova instância do File Manager
+  local custom2_path="/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom2/"
+  new_keybindings+=("${custom2_path}")
+  gsettings set "org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:${custom2_path}" name "New File Manager Window" || true
+  gsettings set "org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:${custom2_path}" command "nautilus --new-window" || true
+  gsettings set "org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:${custom2_path}" binding "<Super><Shift>f" || true
+  
+  # Super+B - Abrir navegador padrão
+  local custom3_path="/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom3/"
+  new_keybindings+=("${custom3_path}")
+  gsettings set "org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:${custom3_path}" name "Open Browser" || true
+  gsettings set "org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:${custom3_path}" command "xdg-open http://" || true
+  gsettings set "org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:${custom3_path}" binding "<Super>b" || true
+  
+  # Super+Shift+B - Nova instância do navegador
+  local custom4_path="/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom4/"
+  new_keybindings+=("${custom4_path}")
+  gsettings set "org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:${custom4_path}" name "New Browser Window" || true
+  gsettings set "org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:${custom4_path}" command "google-chrome --new-window" || true
+  gsettings set "org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:${custom4_path}" binding "<Super><Shift>b" || true
+  
+  # Aplicar todos os keybindings customizados
+  local keybindings_str="["
+  for kb in "${new_keybindings[@]}"; do
+    keybindings_str+="'${kb}',"
+  done
+  keybindings_str="${keybindings_str%,}]"  # Remove última vírgula e fecha array
+  
+  gsettings set org.gnome.settings-daemon.plugins.media-keys custom-keybindings "${keybindings_str}" || true
+  
+  print_info "Atalhos configurados:"
+  print_info "  Super+F: Abrir File Manager"
+  print_info "  Super+Shift+F: Nova janela File Manager"
+  print_info "  Super+B: Abrir navegador padrão"
+  print_info "  Super+Shift+B: Nova janela navegador"
+  
   # Configurações adicionais do sistema
   print_info "Aplicando configurações gerais do sistema..."
   
