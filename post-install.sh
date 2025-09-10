@@ -164,30 +164,51 @@ install_desktop_apps() {
     gnome-shell-extensions
     chrome-gnome-shell
     hardinfo
+    xclip
+    wl-clipboard
   )
   
   print_info "Instalando pacotes base via apt..."
   sudo apt install -y "${apt_pkgs[@]}"
   
+  # Instalar aplicativos individuais (continua mesmo se algum falhar)
+  local failed_apps=()
+  
   # Google Chrome
-  install_google_chrome
+  install_google_chrome || failed_apps+=("Google Chrome")
   
   # Discord
-  install_discord
+  install_discord || failed_apps+=("Discord")
   
   # VS Code
-  install_vscode
+  install_vscode || failed_apps+=("VS Code")
   
   # Slack
-  install_slack
+  install_slack || failed_apps+=("Slack")
   
   # JetBrains Toolbox
-  install_jetbrains_toolbox
+  install_jetbrains_toolbox || failed_apps+=("JetBrains Toolbox")
   
   # Cursor IDE
-  install_cursor
+  install_cursor || failed_apps+=("Cursor IDE")
   
-  print_info "Aplicativos desktop instalados."
+  # Ghostty Terminal
+  install_ghostty || failed_apps+=("Ghostty Terminal")
+  
+  # Mise (mise-en-place)
+  install_mise || failed_apps+=("Mise")
+  
+  # Configurar ferramentas do Mise (Node.js LTS e .NET 9)
+  if command -v mise >/dev/null 2>&1; then
+    configure_mise_tools || print_warn "Falha ao configurar ferramentas do Mise"
+  fi
+  
+  if [[ ${#failed_apps[@]} -eq 0 ]]; then
+    print_info "Todos os aplicativos desktop foram instalados com sucesso."
+  else
+    print_warn "Alguns aplicativos falharam na instalação: ${failed_apps[*]}"
+    print_info "Você pode tentar instalar manualmente depois."
+  fi
 }
 
 install_google_chrome() {
@@ -197,8 +218,12 @@ install_google_chrome() {
   fi
   
   print_info "Instalando Google Chrome..."
-  wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
-  echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
+  # Baixa e instala a chave GPG usando o método moderno
+  wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo gpg --dearmor -o /usr/share/keyrings/google-chrome-keyring.gpg
+  
+  # Adiciona repositório com signed-by
+  echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome-keyring.gpg] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
+  
   sudo apt update
   sudo apt install -y google-chrome-stable
 }
@@ -211,13 +236,39 @@ install_discord() {
   
   print_info "Instalando Discord..."
   if [[ "$auto_install_flatpak" == true ]]; then
-    flatpak install -y flathub com.discordapp.Discord
+    if ! flatpak install -y flathub com.discordapp.Discord 2>/dev/null; then
+      print_warn "Falha ao instalar Discord via Flatpak, tentando .deb..."
+      install_discord_deb
+    fi
   else
-    wget -O /tmp/discord.deb "https://discord.com/api/download?platform=linux&format=deb"
-    sudo dpkg -i /tmp/discord.deb
-    sudo apt install -f -y
-    rm -f /tmp/discord.deb
+    install_discord_deb
   fi
+}
+
+install_discord_deb() {
+  local discord_url="https://discord.com/api/download?platform=linux&format=deb"
+  local temp_file="/tmp/discord.deb"
+  local max_retries=3
+  
+  for attempt in $(seq 1 $max_retries); do
+    print_info "Tentativa $attempt/$max_retries para baixar Discord..."
+    if wget -O "$temp_file" "$discord_url" 2>/dev/null; then
+      if sudo dpkg -i "$temp_file" 2>/dev/null || sudo apt install -f -y; then
+        print_info "Discord instalado com sucesso!"
+        rm -f "$temp_file"
+        return 0
+      fi
+    fi
+    
+    if [[ $attempt -lt $max_retries ]]; then
+      print_warn "Falha na tentativa $attempt, tentando novamente em 3s..."
+      sleep 3
+    fi
+  done
+  
+  print_warn "Falha ao instalar Discord após $max_retries tentativas"
+  rm -f "$temp_file"
+  return 1
 }
 
 install_vscode() {
@@ -294,10 +345,144 @@ install_cursor() {
   fi
   
   print_info "Instalando Cursor IDE..."
-  wget -O /tmp/cursor.deb https://downloader.cursor.sh/linux/appImage/x64
-  sudo dpkg -i /tmp/cursor.deb || true
-  sudo apt install -f -y
-  rm -f /tmp/cursor.deb
+  local cursor_url="https://downloader.cursor.sh/linux/deb/x64"
+  local temp_file="/tmp/cursor.deb"
+  local max_retries=3
+  
+  for attempt in $(seq 1 $max_retries); do
+    print_info "Tentativa $attempt/$max_retries para baixar Cursor..."
+    if wget -O "$temp_file" "$cursor_url" 2>/dev/null; then
+      if sudo dpkg -i "$temp_file" 2>/dev/null; then
+        print_info "Cursor instalado com sucesso!"
+        rm -f "$temp_file"
+        return 0
+      else
+        print_info "Instalando dependências do Cursor..."
+        sudo apt install -f -y
+        rm -f "$temp_file"
+        return 0
+      fi
+    fi
+    
+    if [[ $attempt -lt $max_retries ]]; then
+      print_warn "Falha na tentativa $attempt, tentando novamente em 5s..."
+      sleep 5
+    fi
+  done
+  
+  print_warn "Falha ao instalar Cursor após $max_retries tentativas"
+  rm -f "$temp_file"
+  return 1
+}
+
+install_ghostty() {
+  if command -v ghostty >/dev/null 2>&1; then
+    print_info "Ghostty já está instalado."
+    return 0
+  fi
+  
+  print_info "Instalando Ghostty Terminal..."
+  local max_retries=3
+  
+  for attempt in $(seq 1 $max_retries); do
+    print_info "Tentativa $attempt/$max_retries para instalar Ghostty..."
+    if /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mkasberg/ghostty-ubuntu/HEAD/install.sh)" 2>/dev/null; then
+      print_info "Ghostty instalado com sucesso!"
+      
+      # Configurar como terminal padrão
+      if command -v ghostty >/dev/null 2>&1; then
+        print_info "Configurando Ghostty como terminal padrão..."
+        gsettings set org.gnome.desktop.default-applications.terminal exec 'ghostty'
+        gsettings set org.gnome.desktop.default-applications.terminal exec-arg ''
+        print_info "Ghostty configurado como terminal padrão"
+      fi
+      
+      return 0
+    fi
+    
+    if [[ $attempt -lt $max_retries ]]; then
+      print_warn "Falha na tentativa $attempt, tentando novamente em 5s..."
+      sleep 5
+    fi
+  done
+  
+  print_warn "Falha ao instalar Ghostty após $max_retries tentativas"
+  return 1
+}
+
+install_mise() {
+  if command -v mise >/dev/null 2>&1; then
+    print_info "Mise já está instalado."
+    return 0
+  fi
+  
+  print_info "Instalando Mise (mise-en-place)..."
+  
+  # Criar diretório para chaves
+  sudo install -dm 755 /etc/apt/keyrings
+  
+  # Baixar e instalar chave GPG
+  if wget -qO - https://mise.jdx.dev/gpg-key.pub | gpg --dearmor | sudo tee /etc/apt/keyrings/mise-archive-keyring.gpg 1> /dev/null; then
+    # Adicionar repositório
+    echo "deb [signed-by=/etc/apt/keyrings/mise-archive-keyring.gpg arch=amd64] https://mise.jdx.dev/deb stable main" | sudo tee /etc/apt/sources.list.d/mise.list
+    
+    # Atualizar e instalar
+    if sudo apt update && sudo apt install -y mise; then
+      print_info "Mise instalado com sucesso!"
+      
+      # Adicionar ao shell profile se não existir
+      local shell_profile=""
+      if [[ -f "$HOME/.bashrc" ]]; then
+        shell_profile="$HOME/.bashrc"
+      elif [[ -f "$HOME/.zshrc" ]]; then
+        shell_profile="$HOME/.zshrc"
+      fi
+      
+      if [[ -n "$shell_profile" ]] && ! grep -q 'mise activate' "$shell_profile" 2>/dev/null; then
+        echo 'eval "$(mise activate bash)"' >> "$shell_profile"
+        print_info "Mise adicionado ao $shell_profile"
+      fi
+      
+      return 0
+    fi
+  fi
+  
+  print_warn "Falha ao instalar Mise"
+  return 1
+}
+
+configure_mise_tools() {
+  print_info "Configurando ferramentas do Mise..."
+  
+  # Instalar Node.js LTS
+  print_info "Instalando Node.js LTS via Mise..."
+  if mise install node@lts 2>/dev/null && mise global node@lts 2>/dev/null; then
+    print_info "Node.js LTS instalado e configurado como global"
+  else
+    print_warn "Falha ao instalar Node.js LTS"
+  fi
+  
+  # Instalar .NET 9
+  print_info "Instalando .NET 9 via Mise..."
+  if mise install dotnet@9 2>/dev/null && mise global dotnet@9 2>/dev/null; then
+    print_info ".NET 9 instalado e configurado como global"
+  else
+    print_warn "Falha ao instalar .NET 9"
+  fi
+  
+  # Verificar instalações
+  print_info "Verificando instalações do Mise..."
+  if command -v node >/dev/null 2>&1; then
+    local node_version=$(node --version 2>/dev/null || echo "erro")
+    print_info "Node.js: $node_version"
+  fi
+  
+  if command -v dotnet >/dev/null 2>&1; then
+    local dotnet_version=$(dotnet --version 2>/dev/null || echo "erro")
+    print_info ".NET: $dotnet_version"
+  fi
+  
+  return 0
 }
 
 # Placeholder para as demais funções
