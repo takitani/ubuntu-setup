@@ -263,6 +263,9 @@ install_desktop_apps() {
   # ZapZap (WhatsApp)
   install_zapzap || failed_apps+=("ZapZap")
   
+  # Obsidian
+  install_obsidian || failed_apps+=("Obsidian")
+  
   # Mission Center
   install_mission_center || failed_apps+=("Mission Center")
   
@@ -364,6 +367,28 @@ install_discord_deb() {
   print_warn "Falha ao instalar Discord após $max_retries tentativas"
   rm -f "$temp_file"
   return 1
+}
+
+install_obsidian() {
+  if command -v obsidian >/dev/null 2>&1 || flatpak list | grep -q md.obsidian.Obsidian; then
+    print_info "Obsidian já está instalado."
+    return 0
+  fi
+  
+  print_info "Instalando Obsidian..."
+  if [[ "$auto_install_flatpak" == true ]]; then
+    if flatpak install -y flathub md.obsidian.Obsidian 2>/dev/null; then
+      print_info "Obsidian instalado com sucesso via Flatpak!"
+      return 0
+    else
+      print_warn "Falha ao instalar Obsidian via Flatpak"
+      return 1
+    fi
+  else
+    print_info "Flatpak desabilitado, Obsidian não foi instalado"
+    print_info "Para instalar manualmente: flatpak install flathub md.obsidian.Obsidian"
+    return 1
+  fi
 }
 
 install_zapzap() {
@@ -1964,7 +1989,9 @@ configure_dash_to_dock() {
   print_info "- Posição: Parte inferior da tela"
   print_info "- Auto hide: Ativado - aparece com mouse na parte inferior"
   
-  print_warn "Reinicie o GNOME Shell (Alt+F2, digite 'r', Enter) ou faça logout/login para aplicar todas as mudanças"
+  print_warn "Para aplicar as mudanças do dock:"
+  print_warn "- Wayland: Faça logout/login ou reinicie o sistema"
+  print_warn "- X11: Alt+F2, digite 'r', Enter (reinicia GNOME Shell)"
 }
 
 configure_gnome_extensions() {
