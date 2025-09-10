@@ -198,6 +198,9 @@ install_desktop_apps() {
   # ZapZap (WhatsApp)
   install_zapzap || failed_apps+=("ZapZap")
   
+  # Mission Center
+  install_mission_center || failed_apps+=("Mission Center")
+  
   # VS Code
   install_vscode || failed_apps+=("VS Code")
   
@@ -313,6 +316,30 @@ install_zapzap() {
   fi
 }
 
+install_mission_center() {
+  if flatpak list | grep -q io.missioncenter.MissionCenter; then
+    print_info "Mission Center já está instalado."
+    return 0
+  fi
+  
+  print_info "Instalando Mission Center (Monitor do Sistema)..."
+  
+  if [[ "$auto_install_flatpak" == true ]]; then
+    print_info "Instalando Mission Center via Flatpak..."
+    if flatpak install -y flathub io.missioncenter.MissionCenter 2>/dev/null; then
+      print_info "Mission Center instalado com sucesso via Flatpak!"
+      return 0
+    else
+      print_warn "Falha ao instalar Mission Center via Flatpak"
+      return 1
+    fi
+  else
+    print_warn "Flatpak desabilitado, Mission Center não pode ser instalado"
+    print_info "Para instalar manualmente: flatpak install flathub io.missioncenter.MissionCenter"
+    return 1
+  fi
+}
+
 install_vscode() {
   if command -v code >/dev/null 2>&1; then
     print_info "VS Code já está instalado."
@@ -358,30 +385,79 @@ install_jetbrains_ides() {
   fi
   
   local failed_ides=()
+  local install_jobs=()
   
-  # Instalar Rider
+  # Verificar e preparar instalações paralelas
+  local rider_needed=false
+  local datagrip_needed=false
+  
   if snap list rider >/dev/null 2>&1; then
     print_info "JetBrains Rider já está instalado."
   else
-    print_info "Instalando JetBrains Rider..."
-    if sudo snap install rider --classic 2>/dev/null; then
-      print_info "Rider instalado com sucesso!"
-    else
-      print_warn "Falha ao instalar Rider"
-      failed_ides+=("Rider")
-    fi
+    rider_needed=true
   fi
   
-  # Instalar DataGrip
   if snap list datagrip >/dev/null 2>&1; then
     print_info "JetBrains DataGrip já está instalado."
   else
-    print_info "Instalando JetBrains DataGrip..."
-    if sudo snap install datagrip --classic 2>/dev/null; then
-      print_info "DataGrip instalado com sucesso!"
-    else
-      print_warn "Falha ao instalar DataGrip"
-      failed_ides+=("DataGrip")
+    datagrip_needed=true
+  fi
+  
+  # Instalar em paralelo se necessário
+  if [[ "$rider_needed" == true ]] || [[ "$datagrip_needed" == true ]]; then
+    print_info "Iniciando instalação paralela das IDEs JetBrains..."
+    
+    # Instalar Rider em background se necessário
+    if [[ "$rider_needed" == true ]]; then
+      print_info "Instalando JetBrains Rider..."
+      (
+        if sudo snap install rider --classic 2>/dev/null; then
+          echo "rider:success"
+        else
+          echo "rider:failed"
+        fi
+      ) &
+      install_jobs+=($!)
+    fi
+    
+    # Instalar DataGrip em background se necessário
+    if [[ "$datagrip_needed" == true ]]; then
+      print_info "Instalando JetBrains DataGrip..."
+      (
+        if sudo snap install datagrip --classic 2>/dev/null; then
+          echo "datagrip:success"
+        else
+          echo "datagrip:failed"
+        fi
+      ) &
+      install_jobs+=($!)
+    fi
+    
+    # Aguardar conclusão das instalações paralelas
+    print_info "Aguardando conclusão das instalações..."
+    local results=()
+    for job in "${install_jobs[@]}"; do
+      wait "$job"
+      # Capturar resultado seria mais complexo, então verificamos depois
+    done
+    
+    # Verificar resultados das instalações
+    if [[ "$rider_needed" == true ]]; then
+      if snap list rider >/dev/null 2>&1; then
+        print_info "Rider instalado com sucesso!"
+      else
+        print_warn "Falha ao instalar Rider"
+        failed_ides+=("Rider")
+      fi
+    fi
+    
+    if [[ "$datagrip_needed" == true ]]; then
+      if snap list datagrip >/dev/null 2>&1; then
+        print_info "DataGrip instalado com sucesso!"
+      else
+        print_warn "Falha ao instalar DataGrip"
+        failed_ides+=("DataGrip")
+      fi
     fi
   fi
   
@@ -1213,7 +1289,7 @@ EOF
   
   # Configurar aplicações favoritas no dock
   print_info "Configurando aplicações favoritas..."
-  local favorites="['org.gnome.Nautilus.desktop', 'google-chrome.desktop', 'code.desktop', 'org.gnome.Terminal.desktop', 'rider_rider.desktop', 'datagrip_datagrip.desktop', 'slack.desktop', 'discord.desktop', 'com.rtosta.zapzap.desktop']"
+  local favorites="['org.gnome.Nautilus.desktop', 'google-chrome.desktop', 'code.desktop', 'org.gnome.Terminal.desktop', 'rider_rider.desktop', 'datagrip_datagrip.desktop', 'io.missioncenter.MissionCenter.desktop', 'slack.desktop', 'discord.desktop', 'com.rtosta.zapzap.desktop']"
   gsettings set org.gnome.shell favorite-apps "$favorites"
   
   print_info "Autostart configurado para aplicações selecionadas."
