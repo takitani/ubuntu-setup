@@ -391,20 +391,25 @@ install_cursor() {
       sudo mv "$temp_appimage" "$install_dir/cursor.AppImage"
       sudo chmod +x "$install_dir/cursor.AppImage"
       
-      # Criar link simbólico
-      sudo ln -sf "$install_dir/cursor.AppImage" /usr/local/bin/cursor
+      # Criar script wrapper para evitar problemas de sandbox
+      print_info "Criando script wrapper..."
+      sudo tee /usr/local/bin/cursor > /dev/null <<'EOF'
+#!/bin/bash
+exec /opt/cursor/cursor.AppImage --no-sandbox "$@"
+EOF
+      sudo chmod +x /usr/local/bin/cursor
       
       # Baixar ícone
       print_info "Baixando ícone do Cursor..."
       sudo wget -q -O "$install_dir/cursor-icon.png" \
         "https://raw.githubusercontent.com/hieutt192/Cursor-ubuntu/main/images/cursor-icon.png"
       
-      # Criar desktop entry
+      # Criar desktop entry com flags de sandbox
       print_info "Criando entrada no menu..."
       sudo tee /usr/share/applications/cursor.desktop > /dev/null <<EOF
 [Desktop Entry]
 Name=Cursor
-Exec=/opt/cursor/cursor.AppImage %F
+Exec=/opt/cursor/cursor.AppImage --no-sandbox %F
 Terminal=false
 Type=Application
 Icon=/opt/cursor/cursor-icon.png
