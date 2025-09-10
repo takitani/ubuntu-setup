@@ -1287,17 +1287,17 @@ create_starship_config() {
   create_backup "$starship_config" "starship-setup"
   
   cat > "$starship_config" << 'EOF'
-# Starship configuration - Ubuntu Setup
+# Starship configuration - Ubuntu Setup Professional Theme
 format = """
-[](#9A348E)\
+[](#2E3440)\
 $os\
 $username\
-[](bg:#DA627D fg:#9A348E)\
+[](bg:#3B4252 fg:#2E3440)\
 $directory\
-[](fg:#DA627D bg:#FCA17D)\
+[](fg:#3B4252 bg:#434C5E)\
 $git_branch\
 $git_status\
-[](fg:#FCA17D bg:#86BBD8)\
+[](fg:#434C5E bg:#4C566A)\
 $c\
 $elixir\
 $elm\
@@ -1312,32 +1312,32 @@ $rust\
 $scala\
 $python\
 $dotnet\
-[](fg:#86BBD8 bg:#06969A)\
+[](fg:#4C566A bg:#5E81AC)\
 $docker_context\
-[](fg:#06969A bg:#33658A)\
+[](fg:#5E81AC bg:#81A1C1)\
 $time\
-[ ](fg:#33658A)\
+[ ](fg:#81A1C1)\
 """
 
 # Disable the blank line at the start of the prompt
-# add_newline = false
+add_newline = false
 
-# You can also replace your username with a neat symbol like   or disable it
+# Username with professional styling
 [username]
 show_always = true
-style_user = "bg:#9A348E"
-style_root = "bg:#9A348E"
-format = '[$user ]($style)'
+style_user = "bg:#2E3440 fg:#D8DEE9"
+style_root = "bg:#BF616A fg:#D8DEE9"
+format = '[ $user ]($style)'
 disabled = false
 
-# An alternative to the username module which displays a symbol that
+# Alternative OS symbol configuration
 # represents the current operating system
 [os]
-style = "bg:#9A348E"
+style = "bg:#2E3440 fg:#D8DEE9"
 disabled = true # Disabled by default
 
 [directory]
-style = "bg:#DA627D"
+style = "bg:#3B4252 fg:#D8DEE9"
 format = "[ $path ]($style)"
 truncation_length = 3
 truncation_symbol = "…/"
@@ -1357,92 +1357,92 @@ truncation_symbol = "…/"
 
 [c]
 symbol = " "
-style = "bg:#86BBD8"
+style = "bg:#4C566A fg:#D8DEE9"
 format = '[ $symbol ($version) ]($style)'
 
 [docker_context]
 symbol = " "
-style = "bg:#06969A"
+style = "bg:#5E81AC fg:#D8DEE9"
 format = '[ $symbol $context ]($style) $path'
 
 [elixir]
 symbol = " "
-style = "bg:#86BBD8"
+style = "bg:#4C566A fg:#D8DEE9"
 format = '[ $symbol ($version) ]($style)'
 
 [elm]
 symbol = " "
-style = "bg:#86BBD8"
+style = "bg:#4C566A fg:#D8DEE9"
 format = '[ $symbol ($version) ]($style)'
 
 [git_branch]
 symbol = ""
-style = "bg:#FCA17D"
+style = "bg:#434C5E fg:#D8DEE9"
 format = '[ $symbol $branch ]($style)'
 
 [git_status]
-style = "bg:#FCA17D"
+style = "bg:#434C5E fg:#D8DEE9"
 format = '[$all_status$ahead_behind ]($style)'
 
 [golang]
 symbol = " "
-style = "bg:#86BBD8"
+style = "bg:#4C566A fg:#D8DEE9"
 format = '[ $symbol ($version) ]($style)'
 
 [gradle]
-style = "bg:#86BBD8"
+style = "bg:#4C566A fg:#D8DEE9"
 format = '[ $symbol ($version) ]($style)'
 
 [haskell]
 symbol = " "
-style = "bg:#86BBD8"
+style = "bg:#4C566A fg:#D8DEE9"
 format = '[ $symbol ($version) ]($style)'
 
 [java]
 symbol = " "
-style = "bg:#86BBD8"
+style = "bg:#4C566A fg:#D8DEE9"
 format = '[ $symbol ($version) ]($style)'
 
 [julia]
 symbol = " "
-style = "bg:#86BBD8"
+style = "bg:#4C566A fg:#D8DEE9"
 format = '[ $symbol ($version) ]($style)'
 
 [nodejs]
 symbol = ""
-style = "bg:#86BBD8"
+style = "bg:#4C566A fg:#D8DEE9"
 format = '[ $symbol ($version) ]($style)'
 
 [nim]
 symbol = "󰆥 "
-style = "bg:#86BBD8"
+style = "bg:#4C566A fg:#D8DEE9"
 format = '[ $symbol ($version) ]($style)'
 
 [rust]
 symbol = ""
-style = "bg:#86BBD8"
+style = "bg:#4C566A fg:#D8DEE9"
 format = '[ $symbol ($version) ]($style)'
 
 [scala]
 symbol = " "
-style = "bg:#86BBD8"
+style = "bg:#4C566A fg:#D8DEE9"
 format = '[ $symbol ($version) ]($style)'
 
 [python]
 symbol = " "
-style = "bg:#86BBD8"
+style = "bg:#4C566A fg:#D8DEE9"
 format = '[ $symbol ($version) ]($style)'
 
 [dotnet]
 symbol = "󰪮 "
-style = "bg:#86BBD8"
+style = "bg:#4C566A fg:#D8DEE9"
 format = '[ $symbol ($version) ]($style)'
 
 [time]
 disabled = false
-time_format = "%R" # Hour:Minute Format
-style = "bg:#33658A"
-format = '[ ♥ $time ]($style)'
+time_format = "%H:%M" # Hour:Minute Format
+style = "bg:#81A1C1 fg:#2E3440"
+format = '[ 🕐 $time ]($style)'
 EOF
 
   print_info "Configuração personalizada do starship criada em $starship_config"
