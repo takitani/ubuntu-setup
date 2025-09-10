@@ -552,12 +552,12 @@ configure_mise_tools() {
         print_warn "Falha ao instalar Codex CLI"
       fi
       
-      # Claude CLI (assumindo que existe um pacote oficial)
+      # Claude CLI
       print_info "Instalando Claude CLI..."
-      if npm install -g @anthropic/claude-cli 2>/dev/null; then
+      if npm install -g @anthropic-ai/claude-code 2>/dev/null; then
         print_info "Claude CLI instalado com sucesso"
       else
-        print_warn "Falha ao instalar Claude CLI (pacote pode não existir ainda)"
+        print_warn "Falha ao instalar Claude CLI"
       fi
       
       # Gemini CLI
@@ -597,7 +597,7 @@ configure_mise_tools() {
   # Verificar CLIs de IA instalados
   print_info "Verificando CLIs de IA..."
   command -v codex >/dev/null 2>&1 && print_info "Codex CLI: instalado"
-  command -v claude >/dev/null 2>&1 && print_info "Claude CLI: instalado"
+  command -v claude-code >/dev/null 2>&1 && print_info "Claude CLI: instalado"
   command -v gemini >/dev/null 2>&1 && print_info "Gemini CLI: instalado"
   
   return 0
