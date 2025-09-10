@@ -434,6 +434,9 @@ install_desktop_apps() {
   # LocalSend
   install_localsend || failed_apps+=("LocalSend")
   
+  # Dropbox
+  install_dropbox || failed_apps+=("Dropbox")
+  
   # Docker
   if [[ "$auto_install_docker" == true ]]; then
     install_docker || failed_apps+=("Docker")
@@ -1754,6 +1757,27 @@ install_localsend() {
   print_warn "Falha ao instalar LocalSend após $max_retries tentativas"
   print_info "Você pode tentar instalar manualmente em: https://github.com/localsend/localsend/releases/latest"
   return 1
+}
+
+install_dropbox() {
+  if dpkg -s nautilus-dropbox &> /dev/null; then
+    print_info "Dropbox já está instalado."
+    return 0
+  fi
+  
+  print_info "Instalando Dropbox (sincronização de arquivos na nuvem)..."
+  
+  # Instalar nautilus-dropbox (integração com o gerenciador de arquivos)
+  if sudo apt install -y nautilus-dropbox >/dev/null 2>&1; then
+    print_info "Dropbox instalado com sucesso!"
+    print_info "Para configurar o Dropbox, execute: dropbox start -i"
+    print_info "Ou acesse Dropbox pelo menu de aplicativos para fazer login"
+    return 0
+  else
+    print_warn "Falha ao instalar Dropbox"
+    print_info "Você pode tentar instalar manualmente: sudo apt install nautilus-dropbox"
+    return 1
+  fi
 }
 
 install_docker() {
