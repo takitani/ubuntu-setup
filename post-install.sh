@@ -423,6 +423,115 @@ update_cursor() {
   fi
 }
 
+setup_cursor_autoupdate() {
+  print_info "Configurando serviço de auto-update do Cursor..."
+  
+  # Criar script de update
+  sudo tee /opt/cursor/cursor-updater.sh > /dev/null <<'EOF'
+#!/bin/bash
+# Auto-updater para Cursor IDE
+
+LOG_FILE="/var/log/cursor-update.log"
+
+log() {
+  echo "$(date): $1" >> "$LOG_FILE"
+}
+
+# Verificar se Cursor está instalado
+if [[ ! -f "/opt/cursor/cursor.AppImage" ]]; then
+  log "Cursor não encontrado, pulando atualização"
+  exit 0
+fi
+
+# Instalar jq se necessário
+if ! command -v jq >/dev/null 2>&1; then
+  apt update && apt install -y jq >> "$LOG_FILE" 2>&1
+fi
+
+API_URL="https://www.cursor.com/api/download?platform=linux-x64&releaseTrack=stable"
+USER_AGENT="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"
+TEMP_FILE="/tmp/cursor-autoupdate.AppImage"
+
+# Obter URL de download
+DOWNLOAD_URL=$(curl -sL -A "$USER_AGENT" "$API_URL" | jq -r '.url // .downloadUrl')
+
+if [[ -z "$DOWNLOAD_URL" ]] || [[ "$DOWNLOAD_URL" == "null" ]]; then
+  log "Falha ao obter URL da API do Cursor"
+  exit 1
+fi
+
+# Baixar nova versão
+log "Verificando atualização do Cursor..."
+if wget -q -O "$TEMP_FILE" "$DOWNLOAD_URL"; then
+  if [[ -f "$TEMP_FILE" ]] && file "$TEMP_FILE" | grep -q "ELF"; then
+    # Verificar se é versão diferente (comparar tamanhos)
+    CURRENT_SIZE=$(stat -c%s "/opt/cursor/cursor.AppImage" 2>/dev/null || echo "0")
+    NEW_SIZE=$(stat -c%s "$TEMP_FILE" 2>/dev/null || echo "1")
+    
+    if [[ "$CURRENT_SIZE" != "$NEW_SIZE" ]]; then
+      log "Nova versão detectada, atualizando..."
+      
+      # Backup
+      cp "/opt/cursor/cursor.AppImage" "/opt/cursor/cursor.AppImage.backup"
+      
+      # Atualizar
+      mv "$TEMP_FILE" "/opt/cursor/cursor.AppImage"
+      chmod +x "/opt/cursor/cursor.AppImage"
+      
+      log "Cursor atualizado com sucesso!"
+    else
+      log "Cursor já está na versão mais recente"
+      rm -f "$TEMP_FILE"
+    fi
+  else
+    log "Arquivo baixado inválido"
+    rm -f "$TEMP_FILE"
+  fi
+else
+  log "Falha ao baixar atualização"
+fi
+EOF
+
+  sudo chmod +x /opt/cursor/cursor-updater.sh
+  
+  # Criar systemd service
+  sudo tee /etc/systemd/system/cursor-updater.service > /dev/null <<EOF
+[Unit]
+Description=Cursor IDE Auto Updater
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/cursor/cursor-updater.sh
+User=root
+EOF
+
+  # Criar systemd timer (executa diariamente às 09:00)
+  sudo tee /etc/systemd/system/cursor-updater.timer > /dev/null <<EOF
+[Unit]
+Description=Cursor IDE Auto Updater Timer
+Requires=cursor-updater.service
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=3600
+
+[Install]
+WantedBy=timers.target
+EOF
+
+  # Habilitar e iniciar timer
+  sudo systemctl daemon-reload
+  sudo systemctl enable cursor-updater.timer
+  sudo systemctl start cursor-updater.timer
+  
+  print_info "Serviço de auto-update configurado!"
+  print_info "Cursor será verificado diariamente para atualizações"
+  print_info "Logs em: /var/log/cursor-update.log"
+}
+
 install_cursor() {
   # Verificar se Cursor está instalado E se tem o wrapper correto
   if [[ -f "/usr/local/bin/cursor" ]] && [[ -f "/opt/cursor/cursor.AppImage" ]]; then
@@ -430,11 +539,9 @@ install_cursor() {
     if grep -q "\-\-no-sandbox" /usr/local/bin/cursor 2>/dev/null; then
       print_info "Cursor já está instalado com wrapper correto."
       
-      # Oferecer opção de atualizar
-      read -p "Deseja verificar atualizações? (s/n): " check_update
-      if [[ "$check_update" =~ ^[Ss]$ ]]; then
-        update_cursor
-      fi
+      # Executar update automaticamente se instalação está OK
+      print_info "Cursor instalado corretamente. Verificando atualizações..."
+      update_cursor
       return 0
     else
       print_info "Cursor encontrado, mas wrapper precisa ser atualizado..."
@@ -523,6 +630,9 @@ EOF
       
       # Atualizar cache de aplicações
       sudo update-desktop-database 2>/dev/null || true
+      
+      # Configurar serviço de auto-update
+      setup_cursor_autoupdate
       
       print_info "Cursor instalado com sucesso!"
       
