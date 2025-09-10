@@ -72,6 +72,7 @@ main() {
   install_desktop_apps
   set_locale_ptbr
   configure_keyboard_layout
+  configure_system_settings
   configure_gnome_settings
   configure_gnome_extensions
   configure_autostart
@@ -83,6 +84,7 @@ main() {
   print_info "✓ Aplicativos desktop instalados"
   print_info "✓ Locale configurado (interface EN, formatação BR)"
   print_info "✓ Layout de teclado US-Intl configurado com cedilha correto"
+  print_info "✓ Configurações do sistema aplicadas (terminal padrão, atalhos)"
   print_info "✓ GNOME configurado com extensões e preferências"
   print_info "✓ Autostart configurado"
   print_info ""
@@ -963,6 +965,55 @@ EOF
     cp "$xcompose_file" "$gtk_compose" 2>/dev/null || true
     print_info "GTK3 Compose configurado para cedilha"
   fi
+}
+
+configure_system_settings() {
+  print_step "Configurando configurações do sistema"
+  
+  # Configurar Ghostty como terminal padrão do sistema
+  if command -v ghostty >/dev/null 2>&1; then
+    print_info "Configurando Ghostty como terminal padrão do sistema..."
+    
+    # Definir Ghostty como aplicação padrão para terminal
+    gsettings set org.gnome.desktop.default-applications.terminal exec 'ghostty' || true
+    gsettings set org.gnome.desktop.default-applications.terminal exec-arg '' || true
+    
+    # Configurar atalho de teclado Ctrl+Alt+T para abrir Ghostty
+    print_info "Configurando atalho Ctrl+Alt+T para Ghostty..."
+    
+    # Remover atalho padrão do gnome-terminal se existir
+    gsettings set org.gnome.settings-daemon.plugins.media-keys terminal '[]' || true
+    
+    # Configurar atalho customizado para Ghostty
+    local custom_path="/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom0/"
+    gsettings set org.gnome.settings-daemon.plugins.media-keys custom-keybindings "['${custom_path}']" || true
+    gsettings set "org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:${custom_path}" name "Open Ghostty Terminal" || true
+    gsettings set "org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:${custom_path}" command "ghostty" || true
+    gsettings set "org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:${custom_path}" binding "<Primary><Alt>t" || true
+    
+    print_info "Ghostty configurado como terminal padrão com atalho Ctrl+Alt+T"
+  else
+    print_warn "Ghostty não encontrado, pulando configuração de terminal padrão"
+  fi
+  
+  # Configurações adicionais do sistema
+  print_info "Aplicando configurações gerais do sistema..."
+  
+  # Configurar comportamento do botão de energia (suspender)
+  gsettings set org.gnome.settings-daemon.plugins.power power-button-action 'suspend' || true
+  
+  # Configurar fuso horário para São Paulo
+  if command -v timedatectl >/dev/null 2>&1; then
+    print_info "Configurando fuso horário para America/Sao_Paulo..."
+    sudo timedatectl set-timezone America/Sao_Paulo || true
+  fi
+  
+  # Habilitar NTP para sincronização automática de horário
+  if command -v timedatectl >/dev/null 2>&1; then
+    sudo timedatectl set-ntp true || true
+  fi
+  
+  print_info "Configurações do sistema aplicadas"
 }
 
 configure_gnome_settings() {
