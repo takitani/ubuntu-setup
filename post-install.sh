@@ -349,63 +349,97 @@ install_cursor() {
     print_info "Cursor já está instalado."
     return 0
   fi
-  
-  print_info "Instalando Cursor IDE..."
-  local temp_file="/tmp/cursor.AppImage"
-  local install_dir="/opt/cursor"
+
+  print_info "Instalando Cursor IDE (pacote .deb)..."
+
+  # Limpeza de instalação antiga via AppImage (se existir)
+  if [[ -L "/usr/local/bin/cursor" ]] && [[ "$(readlink -f /usr/local/bin/cursor 2>/dev/null)" == "/opt/cursor/cursor" ]]; then
+    print_info "Removendo instalação antiga do AppImage do Cursor..."
+    sudo rm -f /usr/local/bin/cursor || true
+    sudo rm -rf /opt/cursor || true
+  fi
+
+  local temp_file="/tmp/cursor.deb"
   local max_retries=3
-  
-  # Tentar baixar o AppImage primeiro (mais confiável)
-  local cursor_appimage_url="https://downloader.cursor.sh/linux/appImage/x64"
-  
+
+  # Tenta baixar o .deb mais recente de endpoints conhecidos
+  local endpoints=(
+    "https://downloader.cursor.sh/linux/deb/x64"
+    "https://downloader.cursor.sh/linux/deb/amd64"
+    "https://downloader.cursor.sh/linux/deb"
+  )
+
+  download_deb() {
+    local url="$1"
+    print_info "Baixando Cursor de: $url"
+    if command -v curl >/dev/null 2>&1; then
+      curl -fL --retry 3 --retry-delay 2 -o "$temp_file" "$url" 2>/dev/null || return 1
+    else
+      wget -O "$temp_file" "$url" 2>/dev/null || return 1
+    fi
+    # Validar arquivo .deb
+    if dpkg-deb -I "$temp_file" >/dev/null 2>&1; then
+      return 0
+    fi
+    # Alguns endpoints podem responder com HTML; descartar
+    return 1
+  }
+
+  # Tenta endpoints diretos
   for attempt in $(seq 1 $max_retries); do
-    print_info "Tentativa $attempt/$max_retries para baixar Cursor AppImage..."
-    
-    if wget -O "$temp_file" "$cursor_appimage_url" 2>/dev/null && [[ -f "$temp_file" ]]; then
-      # Verificar se é um AppImage válido
-      if file "$temp_file" | grep -q "ELF"; then
-        print_info "Instalando Cursor AppImage..."
-        
-        # Criar diretório e instalar
-        sudo mkdir -p "$install_dir"
-        sudo cp "$temp_file" "$install_dir/cursor"
-        sudo chmod +x "$install_dir/cursor"
-        
-        # Criar link simbólico
-        sudo ln -sf "$install_dir/cursor" /usr/local/bin/cursor
-        
-        # Criar desktop entry
-        sudo tee /usr/share/applications/cursor.desktop > /dev/null <<EOF
-[Desktop Entry]
-Name=Cursor
-Exec=/opt/cursor/cursor %F
-Terminal=false
-Type=Application
-Icon=cursor
-StartupWMClass=Cursor
-Comment=AI-powered code editor
-Categories=Development;IDE;
-MimeType=text/plain;
-EOF
-        
-        print_info "Cursor instalado com sucesso!"
-        rm -f "$temp_file"
-        return 0
+    for url in "${endpoints[@]}"; do
+      if download_deb "$url"; then
+        attempt=$max_retries
+        break
+      fi
+    done
+  done
+
+  # Fallback: extrair link .deb da página de downloads
+  if [[ ! -s "$temp_file" ]] || ! dpkg-deb -I "$temp_file" >/dev/null 2>&1; then
+    print_warn "Falha nos endpoints diretos. Tentando extrair link do site..."
+    if command -v curl >/dev/null 2>&1; then
+      page_html=$(curl -fsSL https://cursor.com/downloads 2>/dev/null || true)
+    else
+      page_html=$(wget -qO- https://cursor.com/downloads 2>/dev/null || true)
+    fi
+    deb_url=$(printf '%s' "$page_html" | grep -Eo 'https?://[^" ]+\.deb' | grep -E '(amd64|x64|linux)' | head -n1 || true)
+    if [[ -n "$deb_url" ]]; then
+      print_info "Encontrado .deb: $deb_url"
+      if command -v curl >/dev/null 2>&1; then
+        curl -fL --retry 3 --retry-delay 2 -o "$temp_file" "$deb_url" 2>/dev/null || true
       else
-        print_warn "Arquivo baixado não é um AppImage válido"
+        wget -O "$temp_file" "$deb_url" 2>/dev/null || true
       fi
     fi
-    
-    if [[ $attempt -lt $max_retries ]]; then
-      print_warn "Falha na tentativa $attempt, tentando novamente em 5s..."
-      sleep 5
-    fi
-  done
-  
-  print_warn "Falha ao instalar Cursor após $max_retries tentativas"
-  print_info "Você pode baixar manualmente em: https://cursor.com/downloads"
-  rm -f "$temp_file"
-  return 1
+  fi
+
+  if [[ ! -s "$temp_file" ]] || ! dpkg-deb -I "$temp_file" >/dev/null 2>&1; then
+    print_warn "Falha ao baixar o pacote .deb do Cursor."
+    print_info "Baixe manualmente em: https://cursor.com/downloads"
+    rm -f "$temp_file" 2>/dev/null || true
+    return 1
+  fi
+
+  print_info "Instalando pacote .deb do Cursor..."
+  if sudo dpkg -i "$temp_file" 2>/dev/null || sudo apt install -f -y; then
+    print_info "Cursor instalado com sucesso via .deb!"
+  else
+    print_warn "Falha ao instalar o pacote .deb do Cursor."
+    rm -f "$temp_file" 2>/dev/null || true
+    return 1
+  fi
+
+  rm -f "$temp_file" 2>/dev/null || true
+
+  # Verificação pós-instalação
+  if command -v cursor >/dev/null 2>&1; then
+    print_info "Verificação: comando 'cursor' disponível."
+  else
+    print_warn "Comando 'cursor' não encontrado após a instalação. Verifique o PATH."
+  fi
+
+  return 0
 }
 
 install_ghostty() {
