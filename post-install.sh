@@ -372,9 +372,21 @@ EOF
 }
 
 install_cursor() {
-  if command -v cursor >/dev/null 2>&1; then
-    print_info "Cursor já está instalado."
-    return 0
+  # Verificar se Cursor está instalado E se tem o wrapper correto
+  if [[ -f "/usr/local/bin/cursor" ]] && [[ -f "/opt/cursor/cursor.AppImage" ]]; then
+    # Verificar se o wrapper tem --no-sandbox
+    if grep -q "\-\-no-sandbox" /usr/local/bin/cursor 2>/dev/null; then
+      print_info "Cursor já está instalado com wrapper correto."
+      return 0
+    else
+      print_info "Cursor encontrado, mas wrapper precisa ser atualizado..."
+      # Continuar instalação para corrigir wrapper
+    fi
+  elif command -v cursor >/dev/null 2>&1; then
+    print_info "Cursor encontrado em instalação antiga, reinstalando..."
+    # Limpar instalação antiga
+    sudo rm -f /usr/local/bin/cursor 2>/dev/null || true
+    sudo rm -rf /opt/cursor 2>/dev/null || true
   fi
   
   print_info "Instalando Cursor IDE via AppImage..."
@@ -385,9 +397,14 @@ install_cursor() {
     sudo apt install -y jq
   fi
   
-  if ! dpkg -s libfuse2 &> /dev/null; then
-    print_info "Instalando libfuse2 para AppImage..."
-    sudo apt install -y libfuse2
+  # Instalar libfuse2t64 para Ubuntu 25+ (substitui libfuse2)
+  if ! dpkg -s libfuse2t64 &> /dev/null && ! dpkg -s libfuse2 &> /dev/null; then
+    print_info "Instalando libfuse2t64 para AppImage..."
+    # Tentar libfuse2t64 primeiro (Ubuntu 25+), fallback para libfuse2
+    if ! sudo apt install -y libfuse2t64 2>/dev/null; then
+      print_info "libfuse2t64 não encontrado, tentando libfuse2..."
+      sudo apt install -y libfuse2
+    fi
   fi
   
   # Usar a API correta do Cursor (mesma do script funcional)
