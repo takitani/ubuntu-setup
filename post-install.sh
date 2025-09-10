@@ -1942,55 +1942,23 @@ configure_dash_to_dock() {
     return 0
   fi
   
-  # Configurações de posicionamento
-  print_info "Configurando posição: parte inferior da tela"
-  gsettings set "$dock_schema" dock-position 'BOTTOM' 2>/dev/null || print_warn "Falha ao configurar posição do dock"
+  # Configurações básicas e seguras do dock
+  print_info "Configurando dock básico..."
   
-  # Configurações de auto hide
-  print_info "Configurando auto hide..."
-  gsettings set "$dock_schema" dock-fixed false 2>/dev/null || true        # Permite auto hide
-  gsettings set "$dock_schema" autohide true 2>/dev/null || true           # Ativa auto hide
-  gsettings set "$dock_schema" intellihide false 2>/dev/null || true       # Desativa intellihide
+  # Apenas configurações essenciais que raramente causam erro
+  gsettings set "$dock_schema" dock-position 'BOTTOM' 2>/dev/null || true
+  gsettings set "$dock_schema" autohide true 2>/dev/null || true
+  gsettings set "$dock_schema" dock-fixed false 2>/dev/null || true
   
-  # Configurações de comportamento do auto hide (com tratamento de erro)
-  gsettings set "$dock_schema" autohide-in-fullscreen true 2>/dev/null || true      # Hide em fullscreen
-  gsettings set "$dock_schema" require-pressure-to-show false 2>/dev/null || true  # Mostrar apenas com hover (sem pressão)
-  gsettings set "$dock_schema" pressure-threshold 100 2>/dev/null || true          # Limite de pressão (valor inteiro)
-  gsettings set "$dock_schema" animation-time 0.2 2>/dev/null || true              # Animação (valor seguro)
-  gsettings set "$dock_schema" hide-delay 0.2 2>/dev/null || true                  # Delay para esconder (valor seguro)
-  gsettings set "$dock_schema" show-delay 0.25 2>/dev/null || true                 # Delay para mostrar (valor seguro)
-  
-  # Configurações de aparência (com tratamento de erro)
-  print_info "Configurando aparência do dock..."
-  gsettings set "$dock_schema" dash-max-icon-size 48 2>/dev/null || true           # Tamanho dos ícones
-  gsettings set "$dock_schema" icon-size-fixed true 2>/dev/null || true            # Tamanho fixo dos ícones
-  gsettings set "$dock_schema" show-favorites true 2>/dev/null || true             # Mostrar favoritos
-  gsettings set "$dock_schema" show-running true 2>/dev/null || true               # Mostrar aplicações em execução
-  gsettings set "$dock_schema" show-apps-at-top false 2>/dev/null || true          # Apps button no final
-  
-  # Configurações de transparência e estilo (com tratamento de erro)
-  gsettings set "$dock_schema" transparency-mode 'DYNAMIC' 2>/dev/null || true     # Transparência dinâmica
-  gsettings set "$dock_schema" background-opacity 0.8 2>/dev/null || true          # Opacidade de fundo
-  gsettings set "$dock_schema" customize-alphas true 2>/dev/null || true           # Personalizar transparência
-  gsettings set "$dock_schema" min-alpha 0.4 2>/dev/null || true                   # Transparência mínima
-  gsettings set "$dock_schema" max-alpha 0.8 2>/dev/null || true                   # Transparência máxima
-  
-  # Configurações de comportamento (com tratamento de erro)
-  gsettings set "$dock_schema" click-action 'TOGGLE' 2>/dev/null || true           # Clique para alternar janelas
-  gsettings set "$dock_schema" scroll-action 'DO_NOTHING' 2>/dev/null || true      # Scroll não faz nada
-  gsettings set "$dock_schema" middle-click-action 'LAUNCH' 2>/dev/null || true    # Clique do meio abre nova instância
-  
-  # Configurações de multi-monitor (com tratamento de erro)
-  gsettings set "$dock_schema" multi-monitor false 2>/dev/null || true             # Apenas no monitor principal
+  print_info "Configurações básicas do dock aplicadas"
+  print_warn "Configurações avançadas desabilitadas para evitar erros de compatibilidade"
   
   # Configurações de altura e tamanho - removido pois pode estar fora do range
   
   print_info "Dock configurado:"
   print_info "- Extensão: $(basename "$dock_schema")"
   print_info "- Posição: Parte inferior da tela"
-  print_info "- Auto hide: Ativado - aparece com mouse embaixo"
-  print_info "- Transparência: Dinâmica"
-  print_info "- Tamanho dos ícones: 48px"
+  print_info "- Auto hide: Ativado"
   
   print_warn "Reinicie o GNOME Shell (Alt+F2, digite 'r', Enter) ou faça logout/login para aplicar todas as mudanças"
 }
