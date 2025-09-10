@@ -516,43 +516,6 @@ install_jetbrains_ides() {
   fi
 }
 
-check_cursor_needs_update() {
-  # Função silenciosa para verificar se há atualização disponível
-  if [[ ! -f "/opt/cursor/cursor.AppImage" ]]; then
-    return 1  # Precisa instalar
-  fi
-  
-  # Instalar jq silenciosamente se necessário
-  if ! command -v jq >/dev/null 2>&1; then
-    sudo apt install -y jq >/dev/null 2>&1
-  fi
-  
-  local api_url="https://www.cursor.com/api/download?platform=linux-x64&releaseTrack=stable"
-  local user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"
-  
-  # Obter URL da versão mais recente silenciosamente
-  local download_url=$(curl -sL -A "$user_agent" "$api_url" 2>/dev/null | jq -r '.url // .downloadUrl' 2>/dev/null)
-  
-  if [[ -z "$download_url" ]] || [[ "$download_url" == "null" ]]; then
-    return 1  # Não conseguiu verificar, assume que não precisa atualizar
-  fi
-  
-  # Comparar tamanhos sem baixar o arquivo
-  local remote_size=$(curl -sI -L -A "$user_agent" "$download_url" 2>/dev/null | grep -i content-length | awk '{print $2}' | tr -d '\r' 2>/dev/null)
-  local current_size=$(stat -c%s "/opt/cursor/cursor.AppImage" 2>/dev/null || echo "0")
-  
-  # Debug temporário - remover depois
-  echo "DEBUG: URL=$download_url" >&2
-  echo "DEBUG: Remote size=$remote_size, Current size=$current_size" >&2
-  
-  if [[ -n "$remote_size" ]] && [[ "$remote_size" != "0" ]] && [[ "$remote_size" != "$current_size" ]]; then
-    echo "DEBUG: Tamanhos diferentes, precisa atualizar" >&2
-    return 0  # Precisa atualizar (tamanhos diferentes)
-  else
-    echo "DEBUG: Tamanhos iguais ou erro, não precisa atualizar" >&2
-    return 1  # Não precisa atualizar (mesmo tamanho ou erro na verificação)
-  fi
-}
 
 update_cursor() {
   print_info "Verificando atualização do Cursor..."
@@ -579,14 +542,25 @@ update_cursor() {
     return 1
   fi
   
-  # Fazer download apenas do header para comparar tamanho sem baixar o arquivo inteiro
+  # Fazer verificação conservadora primeiro
   print_info "Verificando se há nova versão disponível..."
-  local remote_size=$(curl -sI -L -A "$user_agent" "$download_url" | grep -i content-length | awk '{print $2}' | tr -d '\r')
+  local remote_size=$(timeout 10 curl -sI -L -A "$user_agent" "$download_url" 2>/dev/null | grep -i "^content-length:" | awk '{print $2}' | tr -d '\r\n' 2>/dev/null)
   local current_size=$(stat -c%s "/opt/cursor/cursor.AppImage" 2>/dev/null || echo "0")
   
-  if [[ -n "$remote_size" ]] && [[ "$remote_size" == "$current_size" ]]; then
-    print_info "Cursor já está na versão mais recente"
+  # Validações rigorosas
+  if [[ -z "$remote_size" ]] || [[ ! "$remote_size" =~ ^[0-9]+$ ]]; then
+    print_warn "Não foi possível verificar tamanho do arquivo remoto"
+    return 1
+  fi
+  
+  if [[ "$remote_size" -eq "$current_size" ]]; then
+    print_info "Cursor já está na versão mais recente (${remote_size} bytes)"
     return 0
+  fi
+  
+  if [[ "$remote_size" -lt 1000000 ]]; then
+    print_warn "Arquivo remoto muito pequeno (${remote_size} bytes), provavelmente erro"
+    return 1
   fi
   
   print_info "Nova versão detectada, baixando atualização..."
@@ -752,14 +726,6 @@ install_cursor() {
     # Verificar se o wrapper tem --no-sandbox
     if grep -q "\-\-no-sandbox" /usr/local/bin/cursor 2>/dev/null; then
       print_info "Cursor já está instalado com wrapper correto."
-      
-      # Verificar se precisa atualizar antes de declarar que está OK
-      if check_cursor_needs_update; then
-        print_info "Nova versão disponível, atualizando..."
-        update_cursor
-      else
-        print_info "Cursor já está na versão mais recente."
-      fi
       return 0
     else
       print_info "Cursor encontrado, mas wrapper precisa ser atualizado..."
