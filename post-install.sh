@@ -60,7 +60,18 @@ create_backup() {
   local suffix="${2:-$(date +%Y%m%d%H%M%S)}"
   
   if [[ -f "$file" ]] && [[ ! -f "$file.bak.$suffix" ]]; then
-    cp "$file" "$file.bak.$suffix"
+    # Usar sudo se o arquivo for do sistema (em /etc, /usr, etc.)
+    if [[ "$file" == /etc/* ]] || [[ "$file" == /usr/* ]] || [[ "$file" == /var/* ]]; then
+      sudo cp "$file" "$file.bak.$suffix" 2>/dev/null || {
+        print_warn "Não foi possível criar backup de $file (sem permissão)"
+        return 1
+      }
+    else
+      cp "$file" "$file.bak.$suffix" 2>/dev/null || {
+        print_warn "Não foi possível criar backup de $file"
+        return 1
+      }
+    fi
     print_info "Backup criado: $file.bak.$suffix"
     return 0
   fi
@@ -954,8 +965,8 @@ set_locale_ptbr() {
   # Limpar locale.gen e garantir apenas os locales necessários
   print_info "Otimizando /etc/locale.gen para apenas EN_US e PT_BR..."
   
-  # Criar backup do locale.gen atual
-  create_backup /etc/locale.gen locale
+  # Criar backup do locale.gen atual (opcional)
+  create_backup /etc/locale.gen locale || print_warn "Continuando sem backup do locale.gen"
   
   # Criar novo locale.gen otimizado com apenas os locales necessários
   sudo tee /etc/locale.gen > /dev/null << 'EOF'
