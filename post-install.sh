@@ -204,8 +204,8 @@ install_desktop_apps() {
   # Slack
   install_slack || failed_apps+=("Slack")
   
-  # JetBrains Toolbox
-  install_jetbrains_toolbox || failed_apps+=("JetBrains Toolbox")
+  # JetBrains IDEs (Rider, DataGrip)
+  install_jetbrains_ides || failed_apps+=("JetBrains IDEs")
   
   # Cursor IDE
   install_cursor || failed_apps+=("Cursor IDE")
@@ -345,39 +345,54 @@ install_slack() {
   fi
 }
 
-install_jetbrains_toolbox() {
-  if [[ -f "$HOME/.local/share/JetBrains/Toolbox/bin/jetbrains-toolbox" ]]; then
-    print_info "JetBrains Toolbox já está instalado."
-    return 0
+install_jetbrains_ides() {
+  print_info "Instalando JetBrains IDEs via Snap..."
+  
+  # Verificar se Snap está habilitado
+  if [[ "$auto_install_snap" != true ]]; then
+    print_warn "Snap desabilitado, JetBrains IDEs não podem ser instalados"
+    print_info "Para instalar manualmente:"
+    print_info "  sudo snap install rider --classic"
+    print_info "  sudo snap install datagrip --classic"
+    return 1
   fi
   
-  print_info "Instalando JetBrains Toolbox..."
-  local toolbox_url="https://download.jetbrains.com/toolbox/jetbrains-toolbox-2.1.3.18901.tar.gz"
-  local temp_dir=$(mktemp -d)
+  local failed_ides=()
   
-  wget -O "$temp_dir/toolbox.tar.gz" "$toolbox_url"
-  tar -xzf "$temp_dir/toolbox.tar.gz" -C "$temp_dir" --strip-components=1
+  # Instalar Rider
+  if snap list rider >/dev/null 2>&1; then
+    print_info "JetBrains Rider já está instalado."
+  else
+    print_info "Instalando JetBrains Rider..."
+    if sudo snap install rider --classic 2>/dev/null; then
+      print_info "Rider instalado com sucesso!"
+    else
+      print_warn "Falha ao instalar Rider"
+      failed_ides+=("Rider")
+    fi
+  fi
   
-  mkdir -p "$HOME/.local/share/JetBrains/Toolbox/bin"
-  cp "$temp_dir/jetbrains-toolbox" "$HOME/.local/share/JetBrains/Toolbox/bin/"
-  chmod +x "$HOME/.local/share/JetBrains/Toolbox/bin/jetbrains-toolbox"
+  # Instalar DataGrip
+  if snap list datagrip >/dev/null 2>&1; then
+    print_info "JetBrains DataGrip já está instalado."
+  else
+    print_info "Instalando JetBrains DataGrip..."
+    if sudo snap install datagrip --classic 2>/dev/null; then
+      print_info "DataGrip instalado com sucesso!"
+    else
+      print_warn "Falha ao instalar DataGrip"
+      failed_ides+=("DataGrip")
+    fi
+  fi
   
-  # Criar .desktop file
-  cat > "$HOME/.local/share/applications/jetbrains-toolbox.desktop" << EOF
-[Desktop Entry]
-Version=1.0
-Type=Application
-Name=JetBrains Toolbox
-Icon=jetbrains-toolbox
-Exec=$HOME/.local/share/JetBrains/Toolbox/bin/jetbrains-toolbox
-Comment=JetBrains Toolbox
-Categories=Development;IDE;
-Terminal=false
-StartupWMClass=jetbrains-toolbox
-StartupNotify=true
-EOF
-  
-  rm -rf "$temp_dir"
+  # Relatório de instalação
+  if [[ ${#failed_ides[@]} -eq 0 ]]; then
+    print_info "Todas as JetBrains IDEs foram instaladas com sucesso!"
+    print_info "Auto-updates via Snap habilitados automaticamente"
+  else
+    print_warn "Algumas IDEs falharam na instalação: ${failed_ides[*]}"
+    return 1
+  fi
 }
 
 update_cursor() {
@@ -1198,7 +1213,7 @@ EOF
   
   # Configurar aplicações favoritas no dock
   print_info "Configurando aplicações favoritas..."
-  local favorites="['org.gnome.Nautilus.desktop', 'google-chrome.desktop', 'code.desktop', 'org.gnome.Terminal.desktop', 'slack.desktop', 'discord.desktop', 'com.rtosta.zapzap.desktop']"
+  local favorites="['org.gnome.Nautilus.desktop', 'google-chrome.desktop', 'code.desktop', 'org.gnome.Terminal.desktop', 'rider_rider.desktop', 'datagrip_datagrip.desktop', 'slack.desktop', 'discord.desktop', 'com.rtosta.zapzap.desktop']"
   gsettings set org.gnome.shell favorite-apps "$favorites"
   
   print_info "Autostart configurado para aplicações selecionadas."
