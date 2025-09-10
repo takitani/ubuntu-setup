@@ -951,32 +951,30 @@ configure_mise_tools() {
 set_locale_ptbr() {
   print_step "Configurando locale (interface EN, formatação BR)"
 
-  # Garante que as linhas existam e estejam descomentadas em /etc/locale.gen
-  local locales=("en_US.UTF-8 UTF-8" "pt_BR.UTF-8 UTF-8")
-  local needs_generation=false
+  # Limpar locale.gen e garantir apenas os locales necessários
+  print_info "Otimizando /etc/locale.gen para apenas EN_US e PT_BR..."
   
-  for locale in "${locales[@]}"; do
-    if ! grep -Eq "^[^#]*${locale//./\\.}" /etc/locale.gen 2>/dev/null; then
-      # Tenta descomentar, caso exista comentada
-      if grep -Eq "^#\\s*${locale//./\\.}" /etc/locale.gen 2>/dev/null; then
-        sudo sed -i "s/^#\\s*${locale//./\\.}/${locale}/" /etc/locale.gen
-        needs_generation=true
-        print_info "Descomentado locale: $locale"
-      else
-        printf '%s\n' "$locale" | sudo tee -a /etc/locale.gen >/dev/null
-        needs_generation=true
-        print_info "Adicionado locale: $locale"
-      fi
-    else
-      print_info "Locale já configurado: $locale"
-    fi
-  done
+  # Criar backup do locale.gen atual
+  create_backup /etc/locale.gen locale
+  
+  # Criar novo locale.gen otimizado com apenas os locales necessários
+  sudo tee /etc/locale.gen > /dev/null << 'EOF'
+# Locale configuration optimized by ubuntu-setup
+# Only generate necessary locales to speed up locale-gen
 
-  # Gera locales se necessário
-  if [[ "$needs_generation" == true ]]; then
-    print_info "Gerando locales..."
-    sudo locale-gen
-  fi
+# English (US)
+en_US.UTF-8 UTF-8
+
+# Portuguese (Brazil) 
+pt_BR.UTF-8 UTF-8
+EOF
+
+  print_info "Locale configurado: en_US.UTF-8 UTF-8"
+  print_info "Locale configurado: pt_BR.UTF-8 UTF-8"
+
+  # Gera apenas os locales específicos que precisamos
+  print_info "Gerando locales específicos (EN_US e PT_BR)..."
+  sudo locale-gen en_US.UTF-8 pt_BR.UTF-8
 
   # Define locale do sistema: interface em inglês, formatação brasileira
   # IMPORTANTE: LC_CTYPE=pt_BR.UTF-8 é CRÍTICO para o cedilha funcionar!
