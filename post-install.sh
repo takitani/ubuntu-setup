@@ -1639,38 +1639,28 @@ EOF
 }
 
 configure_keyboard_layout() {
-  print_step "Configurando layout de teclado US-Intl com cedilha"
+  print_step "Configurando layout de teclado US International com cedilha"
 
-  # No GNOME, configuramos via gsettings
-  # Layout principal: US International
-  # Layout secundário: BR (para alternância)
+  # Configurar apenas US International como padrão
+  # Layout BR fica opcional (usuário pode adicionar manualmente)
   
   print_info "DEBUG: Obtendo configurações atuais de layout..."
   local current_sources=$(gsettings get org.gnome.desktop.input-sources sources 2>/dev/null || echo "erro")
-  local desired_sources="[('xkb', 'us+intl'), ('xkb', 'br')]"
+  local desired_sources="[('xkb', 'us+intl')]"
   print_info "DEBUG: Current sources: $current_sources"
   
   if [[ "$current_sources" != "$desired_sources" ]] && [[ "$current_sources" != "erro" ]]; then
-    print_info "Configurando layouts de teclado: US International + BR"
+    print_info "Configurando layout de teclado: US International"
     gsettings set org.gnome.desktop.input-sources sources "$desired_sources" || print_warn "Falha ao definir sources"
     gsettings set org.gnome.desktop.input-sources current 0 || print_warn "Falha ao definir current"
-    print_info "Layouts configurados: US-Intl (principal) + BR (secundário)"
+    print_info "Layout configurado: US International"
   else
-    print_info "Layouts de teclado já estão configurados corretamente ou erro na verificação"
+    print_info "Layout de teclado já está configurado corretamente ou erro na verificação"
   fi
   
-  print_info "DEBUG: Configurando atalho de alternância..."
-  # Configurar atalho para alternar layouts (Super+Space)
-  local current_switch=$(gsettings get org.gnome.desktop.wm.keybindings switch-input-source 2>/dev/null || echo "erro")
-  local desired_switch="['<Super>space']"
-  print_info "DEBUG: Current switch: $current_switch"
-  
-  if [[ "$current_switch" != "$desired_switch" ]] && [[ "$current_switch" != "erro" ]]; then
-    print_info "Configurando atalho Super+Space para alternar layouts"
-    gsettings set org.gnome.desktop.wm.keybindings switch-input-source "$desired_switch" || print_warn "Falha ao definir switch"
-  else
-    print_info "Atalho de alternância já está configurado ou erro na verificação"
-  fi
+  print_info "DEBUG: Removendo atalho de alternância (não necessário com apenas um layout)..."
+  # Limpar atalho de alternância já que temos apenas um layout
+  gsettings set org.gnome.desktop.wm.keybindings switch-input-source "[]" 2>/dev/null || true
 
   print_info "DEBUG: Iniciando configuração de cedilha..."
   # Configurar .XCompose para cedilha correto
@@ -1678,10 +1668,9 @@ configure_keyboard_layout() {
   
   print_info "DEBUG: Finalizando configuração de teclado..."
   print_info "Layout de teclado configurado:"
-  print_info "- Layout principal: US International"
-  print_info "- Layout secundário: BR" 
-  print_info "- Alternância: Super + Space"
+  print_info "- Layout: US International"
   print_info "- Cedilha: ' + c = ç"
+  print_info "- Para adicionar layout BR: Settings > Keyboard > Input Sources"
   print_info "DEBUG: configure_keyboard_layout concluída"
   print_info "DEBUG: ===== SAINDO DE configure_keyboard_layout ====="
 }
