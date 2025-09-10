@@ -1903,11 +1903,17 @@ configure_dash_to_dock() {
   local available_schemas=$(gsettings list-schemas | grep -E "(ubuntu-dock|dash-to-dock)" || echo "nenhuma")
   print_info "Schemas encontrados: $available_schemas"
   
-  # Verificar se ubuntu-dock está disponível (padrão do Ubuntu)
-  if gsettings list-schemas | grep -q "org.gnome.shell.extensions.ubuntu-dock"; then
-    print_info "Configurando Ubuntu Dock (nativo)..."
-    local dock_schema="org.gnome.shell.extensions.ubuntu-dock"
-  elif gsettings list-schemas | grep -q "org.gnome.shell.extensions.dash-to-dock"; then
+  # Primeiro, desabilitar ubuntu-dock se estiver ativa
+  if command -v gnome-extensions >/dev/null 2>&1; then
+    if gnome-extensions list --enabled | grep -q "ubuntu-dock@ubuntu.com"; then
+      print_info "Desabilitando Ubuntu Dock nativo..."
+      gnome-extensions disable "ubuntu-dock@ubuntu.com" 2>/dev/null || true
+      print_info "Ubuntu Dock desabilitado"
+    fi
+  fi
+  
+  # Verificar se dash-to-dock está disponível
+  if gsettings list-schemas | grep -q "org.gnome.shell.extensions.dash-to-dock"; then
     print_info "Configurando Dash-to-dock..."
     local dock_schema="org.gnome.shell.extensions.dash-to-dock"
     
@@ -1917,6 +1923,14 @@ configure_dash_to_dock() {
         gnome-extensions enable "dash-to-dock@micxgx.gmail.com" 2>/dev/null || true
         print_info "Dash-to-dock habilitado"
       fi
+    fi
+  elif gsettings list-schemas | grep -q "org.gnome.shell.extensions.ubuntu-dock"; then
+    print_info "Dash-to-dock não disponível, usando Ubuntu Dock (nativo)..."
+    local dock_schema="org.gnome.shell.extensions.ubuntu-dock"
+    
+    # Reabilitar ubuntu-dock se for o único disponível
+    if command -v gnome-extensions >/dev/null 2>&1; then
+      gnome-extensions enable "ubuntu-dock@ubuntu.com" 2>/dev/null || true
     fi
   else
     print_warn "Nenhuma extensão de dock encontrada"
@@ -1940,11 +1954,11 @@ configure_dash_to_dock() {
   
   # Configurações de comportamento do auto hide
   gsettings set "$dock_schema" autohide-in-fullscreen true      # Hide em fullscreen
-  gsettings set "$dock_schema" require-pressure-to-show true   # Pressão para mostrar
-  gsettings set "$dock_schema" pressure-threshold 100.0        # Limite de pressão
-  gsettings set "$dock_schema" animation-time 0.2              # Tempo de animação
-  gsettings set "$dock_schema" hide-delay 0.2                  # Delay para esconder
-  gsettings set "$dock_schema" show-delay 0.25                 # Delay para mostrar
+  gsettings set "$dock_schema" require-pressure-to-show false  # Mostrar apenas com hover (sem pressão)
+  gsettings set "$dock_schema" pressure-threshold 50.0         # Limite de pressão baixo (caso seja usado)
+  gsettings set "$dock_schema" animation-time 0.15             # Animação mais rápida
+  gsettings set "$dock_schema" hide-delay 0.8                  # Delay maior para esconder (mais tempo para interagir)
+  gsettings set "$dock_schema" show-delay 0.1                  # Delay menor para mostrar (resposta mais rápida)
   
   # Configurações de aparência
   print_info "Configurando aparência do dock..."
@@ -1975,7 +1989,7 @@ configure_dash_to_dock() {
   print_info "Dock configurado:"
   print_info "- Extensão: $(basename "$dock_schema")"
   print_info "- Posição: Parte inferior da tela"
-  print_info "- Auto hide: Ativado com pressão para mostrar"
+  print_info "- Auto hide: Ativado - aparece com mouse embaixo"
   print_info "- Transparência: Dinâmica"
   print_info "- Tamanho dos ícones: 48px"
   
