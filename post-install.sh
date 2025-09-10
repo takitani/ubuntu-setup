@@ -349,158 +349,92 @@ install_cursor() {
     print_info "Cursor já está instalado."
     return 0
   fi
-
-  print_info "Instalando Cursor IDE (pacote .deb)..."
-
-  # Limpeza de instalação antiga via AppImage (se existir)
-  if [[ -L "/usr/local/bin/cursor" ]] && [[ "$(readlink -f /usr/local/bin/cursor 2>/dev/null)" == "/opt/cursor/cursor" ]]; then
-    print_info "Removendo instalação antiga do AppImage do Cursor..."
-    sudo rm -f /usr/local/bin/cursor || true
-    sudo rm -rf /opt/cursor || true
+  
+  print_info "Instalando Cursor IDE via AppImage..."
+  
+  # Instalar dependências necessárias
+  if ! command -v jq >/dev/null 2>&1; then
+    print_info "Instalando jq para processar API do Cursor..."
+    sudo apt install -y jq
   fi
-
-  local temp_file="/tmp/cursor.deb"
-  local max_retries=3
-
-  # 1) Tentar obter URL assinado via API pública do site
-  fetch_cursor_deb_url_api() {
-    local api_base="https://cursor.com/api/download"
-    local candidates=(
-      "${api_base}?platform=linux&arch=amd64&package=deb"
-      "${api_base}?platform=linux&arch=x64&package=deb"
-      "${api_base}?os=linux&arch=amd64&format=deb"
-    )
-    local headers=(
-      "-H" "Accept: application/json"
-      "-H" "Referer: https://cursor.com/downloads"
-      "-A" "Mozilla/5.0"
-    )
-    for u in "${candidates[@]}"; do
-      print_info "Consultando API: $u"
-      local body
-      if command -v curl >/dev/null 2>&1; then
-        body=$(curl -fsSL "${headers[@]}" "$u" 2>/dev/null || true)
-      else
-        body=$(wget -qO- "$u" 2>/dev/null || true)
+  
+  if ! dpkg -s libfuse2 &> /dev/null; then
+    print_info "Instalando libfuse2 para AppImage..."
+    sudo apt install -y libfuse2
+  fi
+  
+  # Usar a API correta do Cursor (mesma do script funcional)
+  local api_url="https://www.cursor.com/api/download?platform=linux-x64&releaseTrack=stable"
+  local user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"
+  local temp_appimage="/tmp/cursor.AppImage"
+  local install_dir="/opt/cursor"
+  
+  print_info "Obtendo URL de download do Cursor via API..."
+  local download_url=$(curl -sL -A "$user_agent" "$api_url" | jq -r '.url // .downloadUrl')
+  
+  if [[ -z "$download_url" ]] || [[ "$download_url" == "null" ]]; then
+    print_warn "Não foi possível obter URL da API do Cursor"
+    print_info "Tentando fallback para URL direta..."
+    # Fallback para URL direta conhecida
+    download_url="https://downloader.cursor.sh/linux/appImage/x64"
+  fi
+  
+  print_info "Baixando Cursor AppImage..."
+  if wget -q --show-progress -O "$temp_appimage" "$download_url"; then
+    if [[ -f "$temp_appimage" ]] && file "$temp_appimage" | grep -q "ELF"; then
+      print_info "Download concluído, instalando..."
+      
+      # Criar diretório de instalação
+      sudo mkdir -p "$install_dir"
+      
+      # Mover AppImage para o diretório de instalação
+      sudo mv "$temp_appimage" "$install_dir/cursor.AppImage"
+      sudo chmod +x "$install_dir/cursor.AppImage"
+      
+      # Criar link simbólico
+      sudo ln -sf "$install_dir/cursor.AppImage" /usr/local/bin/cursor
+      
+      # Baixar ícone
+      print_info "Baixando ícone do Cursor..."
+      sudo wget -q -O "$install_dir/cursor-icon.png" \
+        "https://raw.githubusercontent.com/hieutt192/Cursor-ubuntu/main/images/cursor-icon.png"
+      
+      # Criar desktop entry
+      print_info "Criando entrada no menu..."
+      sudo tee /usr/share/applications/cursor.desktop > /dev/null <<EOF
+[Desktop Entry]
+Name=Cursor
+Exec=/opt/cursor/cursor.AppImage %F
+Terminal=false
+Type=Application
+Icon=/opt/cursor/cursor-icon.png
+StartupWMClass=Cursor
+Comment=AI-powered code editor
+Categories=Development;IDE;
+MimeType=text/plain;
+EOF
+      
+      # Atualizar cache de aplicações
+      sudo update-desktop-database 2>/dev/null || true
+      
+      print_info "Cursor instalado com sucesso!"
+      
+      # Verificar instalação
+      if command -v cursor >/dev/null 2>&1; then
+        print_info "Comando 'cursor' disponível no terminal"
       fi
-      if [[ -n "$body" ]]; then
-        # Extrair primeira URL .deb do JSON/HTML
-        local found
-        if command -v jq >/dev/null 2>&1; then
-          found=$(printf '%s' "$body" | jq -r '..|.url?,..|.href?,..|.downloadUrl? | select(type=="string") | select(test("\\.deb$"))' 2>/dev/null | head -n1)
-        fi
-        if [[ -z "$found" ]]; then
-          found=$(printf '%s' "$body" | grep -Eo 'https?://[^" ]+\.deb' | head -n1 || true)
-        fi
-        if [[ -n "$found" ]]; then
-          printf '%s' "$found"
-          return 0
-        fi
-      fi
-    done
-    return 1
-  }
-
-  # 2) Tenta baixar o .deb mais recente de endpoints conhecidos
-  local endpoints=(
-    "https://downloader.cursor.sh/linux/deb/x64"
-    "https://downloader.cursor.sh/linux/deb/amd64"
-    "https://downloader.cursor.sh/linux/deb"
-  )
-
-  download_deb() {
-    local url="$1"
-    print_info "Baixando Cursor de: $url"
-    if command -v curl >/dev/null 2>&1; then
-      curl -fL --retry 3 --retry-delay 2 -o "$temp_file" "$url" 2>/dev/null || return 1
-    else
-      wget -O "$temp_file" "$url" 2>/dev/null || return 1
-    fi
-    # Validar arquivo .deb
-    if dpkg-deb -I "$temp_file" >/dev/null 2>&1; then
+      
       return 0
-    fi
-    # Alguns endpoints podem responder com HTML; descartar
-    return 1
-  }
-
-  # Passo A: API
-  api_url=$(fetch_cursor_deb_url_api || true)
-  if [[ -n "$api_url" ]]; then
-    print_info "Baixando .deb via API: $api_url"
-    if command -v curl >/dev/null 2>&1; then
-      curl -fL --retry 3 --retry-delay 2 -o "$temp_file" "$api_url" 2>/dev/null || true
     else
-      wget -O "$temp_file" "$api_url" 2>/dev/null || true
+      print_warn "Arquivo baixado não é um AppImage válido"
+      rm -f "$temp_appimage"
+      return 1
     fi
-  fi
-
-  # Passo B: Endpoints diretos
-  if [[ ! -s "$temp_file" ]] || ! dpkg-deb -I "$temp_file" >/dev/null 2>&1; then
-    for attempt in $(seq 1 $max_retries); do
-      for url in "${endpoints[@]}"; do
-        if download_deb "$url"; then
-          attempt=$max_retries
-          break
-        fi
-      done
-    done
-  fi
-
-  # Passo C: Fallback — extrair link .deb da página de downloads (JS pode gerar link dinâmico)
-  if [[ ! -s "$temp_file" ]] || ! dpkg-deb -I "$temp_file" >/dev/null 2>&1; then
-    print_warn "Falha nos endpoints diretos. Tentando extrair link do site..."
-    if command -v curl >/dev/null 2>&1; then
-      page_html=$(curl -fsSL https://cursor.com/downloads 2>/dev/null || true)
-    else
-      page_html=$(wget -qO- https://cursor.com/downloads 2>/dev/null || true)
-    fi
-    # Também tentar puxar chunks JS e procurar URL .deb
-    deb_url=$(printf '%s' "$page_html" | grep -Eo 'https?://[^" ]+\.deb' | grep -E '(amd64|x64|linux)' | head -n1 || true)
-    if [[ -z "$deb_url" ]]; then
-      chunk_paths=$(printf '%s' "$page_html" | grep -Eo '/_next/static/chunks/[^"<]+' | head -n 30 || true)
-      for p in $chunk_paths; do
-        js=$(curl -fsSL "https://cursor.com$p" 2>/dev/null || true)
-        cand=$(printf '%s' "$js" | grep -Eo 'https?://[^" ]+\.deb' | head -n1 || true)
-        if [[ -n "$cand" ]]; then deb_url="$cand"; break; fi
-      done
-    fi
-    if [[ -n "$deb_url" ]]; then
-      print_info "Encontrado .deb: $deb_url"
-      if command -v curl >/dev/null 2>&1; then
-        curl -fL --retry 3 --retry-delay 2 -o "$temp_file" "$deb_url" 2>/dev/null || true
-      else
-        wget -O "$temp_file" "$deb_url" 2>/dev/null || true
-      fi
-    fi
-  fi
-
-  if [[ ! -s "$temp_file" ]] || ! dpkg-deb -I "$temp_file" >/dev/null 2>&1; then
-    print_warn "Falha ao baixar o pacote .deb do Cursor."
-    print_info "Baixe manualmente em: https://cursor.com/downloads"
-    rm -f "$temp_file" 2>/dev/null || true
+  else
+    print_warn "Falha ao baixar Cursor AppImage"
+    print_info "Você pode baixar manualmente em: https://cursor.com/downloads"
     return 1
   fi
-
-  print_info "Instalando pacote .deb do Cursor..."
-  if sudo dpkg -i "$temp_file" 2>/dev/null || sudo apt install -f -y; then
-    print_info "Cursor instalado com sucesso via .deb!"
-  else
-    print_warn "Falha ao instalar o pacote .deb do Cursor."
-    rm -f "$temp_file" 2>/dev/null || true
-    return 1
-  fi
-
-  rm -f "$temp_file" 2>/dev/null || true
-
-  # Verificação pós-instalação
-  if command -v cursor >/dev/null 2>&1; then
-    print_info "Verificação: comando 'cursor' disponível."
-  else
-    print_warn "Comando 'cursor' não encontrado após a instalação. Verifique o PATH."
-  fi
-
-  return 0
 }
 
 install_ghostty() {
