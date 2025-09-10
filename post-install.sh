@@ -186,6 +186,9 @@ install_desktop_apps() {
   # Discord
   install_discord || failed_apps+=("Discord")
   
+  # ZapZap (WhatsApp)
+  install_zapzap || failed_apps+=("ZapZap")
+  
   # VS Code
   install_vscode || failed_apps+=("VS Code")
   
@@ -275,6 +278,30 @@ install_discord_deb() {
   print_warn "Falha ao instalar Discord após $max_retries tentativas"
   rm -f "$temp_file"
   return 1
+}
+
+install_zapzap() {
+  if command -v com.rtosta.zapzap >/dev/null 2>&1 || flatpak list | grep -q com.rtosta.zapzap; then
+    print_info "ZapZap já está instalado."
+    return 0
+  fi
+  
+  print_info "Instalando ZapZap (WhatsApp Web)..."
+  
+  if [[ "$auto_install_flatpak" == true ]]; then
+    print_info "Instalando ZapZap via Flatpak..."
+    if flatpak install -y flathub com.rtosta.zapzap 2>/dev/null; then
+      print_info "ZapZap instalado com sucesso via Flatpak!"
+      return 0
+    else
+      print_warn "Falha ao instalar ZapZap via Flatpak"
+      return 1
+    fi
+  else
+    print_warn "Flatpak desabilitado, ZapZap não pode ser instalado"
+    print_info "Para instalar manualmente: flatpak install flathub com.rtosta.zapzap"
+    return 1
+  fi
 }
 
 install_vscode() {
@@ -928,7 +955,7 @@ EOF
   
   # Configurar aplicações favoritas no dock
   print_info "Configurando aplicações favoritas..."
-  local favorites="['org.gnome.Nautilus.desktop', 'google-chrome.desktop', 'code.desktop', 'org.gnome.Terminal.desktop', 'slack.desktop', 'discord.desktop']"
+  local favorites="['org.gnome.Nautilus.desktop', 'google-chrome.desktop', 'code.desktop', 'org.gnome.Terminal.desktop', 'slack.desktop', 'discord.desktop', 'com.rtosta.zapzap.desktop']"
   gsettings set org.gnome.shell favorite-apps "$favorites"
   
   print_info "Autostart configurado para aplicações selecionadas."
