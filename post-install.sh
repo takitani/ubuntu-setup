@@ -122,16 +122,66 @@ update_system() {
   fi
   
   print_info "Atualizando lista de pacotes..."
-  sudo apt update
+  if ! sudo apt update; then
+    print_warn "Alguns repositórios falharam, tentando corrigir..."
+    fix_broken_repositories
+    sudo apt update || print_warn "Alguns repositórios ainda com problemas, continuando..."
+  fi
   
   print_info "Atualizando pacotes instalados..."
-  sudo apt upgrade -y
+  sudo apt upgrade -y --fix-missing || print_warn "Alguns pacotes não puderam ser atualizados"
+  
+  print_info "Corrigindo dependências quebradas..."
+  sudo apt install -f -y
   
   print_info "Removendo pacotes desnecessários..."
   sudo apt autoremove -y
   sudo apt autoclean
   
   print_info "Sistema atualizado com sucesso."
+}
+
+fix_broken_repositories() {
+  print_info "Corrigindo repositórios com problemas..."
+  
+  # Detectar versão do Ubuntu
+  local ubuntu_version=$(lsb_release -rs 2>/dev/null)
+  local ubuntu_codename=$(lsb_release -cs 2>/dev/null)
+  
+  if [[ "$ubuntu_version" == "25.04" ]] || [[ "$ubuntu_codename" == "plucky" ]]; then
+    print_info "Ubuntu 25.04 detectado, aplicando correções específicas..."
+    
+    # Backup dos sources atuais
+    sudo cp /etc/apt/sources.list /etc/apt/sources.list.backup-$(date +%Y%m%d) 2>/dev/null || true
+    
+    # Criar sources.list mais conservador para Ubuntu 25.04
+    sudo tee /etc/apt/sources.list > /dev/null << EOF
+# Ubuntu 25.04 (Plucky Puffin) - Repositórios principais
+deb http://archive.ubuntu.com/ubuntu/ plucky main restricted universe multiverse
+deb-src http://archive.ubuntu.com/ubuntu/ plucky main restricted universe multiverse
+
+# Updates
+deb http://archive.ubuntu.com/ubuntu/ plucky-updates main restricted universe multiverse
+deb-src http://archive.ubuntu.com/ubuntu/ plucky-updates main restricted universe multiverse
+
+# Security
+deb http://security.ubuntu.com/ubuntu/ plucky-security main restricted universe multiverse
+deb-src http://security.ubuntu.com/ubuntu/ plucky-security main restricted universe multiverse
+
+# Backports
+deb http://archive.ubuntu.com/ubuntu/ plucky-backports main restricted universe multiverse
+deb-src http://archive.ubuntu.com/ubuntu/ plucky-backports main restricted universe multiverse
+EOF
+    
+    print_info "Sources.list atualizado para Ubuntu 25.04"
+  fi
+  
+  # Limpar cache de apt
+  sudo apt clean
+  sudo rm -rf /var/lib/apt/lists/*
+  
+  # Recriar cache
+  sudo apt update --fix-missing || true
 }
 
 setup_repositories() {
@@ -1039,10 +1089,10 @@ install_zsh_starship_zoxide() {
     
     if [[ $? -eq 0 ]]; then
       print_info "Zoxide instalado com sucesso!"
-      # Adicionar zoxide ao PATH se necessário
-      if [[ -f "$HOME/.local/bin/zoxide" ]] && [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
-        echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc"
+      # Adicionar zoxide ao PATH para a sessão atual
+      if [[ -f "$HOME/.local/bin/zoxide" ]]; then
         export PATH="$HOME/.local/bin:$PATH"
+        print_info "PATH atualizado para a sessão atual"
       fi
     else
       print_warn "Falha ao instalar zoxide"
@@ -1055,20 +1105,28 @@ install_zsh_starship_zoxide() {
   # Configurar zsh
   configure_zsh_config
   
-  # Oferecer mudança do shell padrão
+  # Configurar zsh como shell padrão (sem prompt de senha)
   local current_shell=$(basename "$SHELL")
   if [[ "$current_shell" != "zsh" ]]; then
     print_info "Configurando zsh como shell padrão..."
     if command -v zsh >/dev/null 2>&1; then
+      local zsh_path=$(which zsh)
+      
       # Adicionar zsh aos shells válidos se não estiver
-      if ! grep -q "$(which zsh)" /etc/shells 2>/dev/null; then
-        which zsh | sudo tee -a /etc/shells >/dev/null
+      if ! grep -q "$zsh_path" /etc/shells 2>/dev/null; then
+        echo "$zsh_path" | sudo tee -a /etc/shells >/dev/null
+        print_info "Zsh adicionado à lista de shells válidos"
       fi
       
-      # Mudar shell padrão
-      chsh -s "$(which zsh)" || print_warn "Não foi possível alterar shell padrão automaticamente"
-      print_info "Shell padrão configurado para zsh"
-      print_warn "Faça logout e login novamente para usar o zsh como shell padrão"
+      # Mudar shell padrão usando usermod (não pede senha)
+      if sudo usermod -s "$zsh_path" "$USER" 2>/dev/null; then
+        print_info "Shell padrão configurado para zsh"
+        print_info "Zsh será ativado após o reinício recomendado"
+      else
+        # Fallback: mostrar instruções manuais
+        print_warn "Não foi possível alterar shell automaticamente"
+        print_info "Para alterar manualmente execute: chsh -s $zsh_path"
+      fi
     fi
   else
     print_info "Zsh já é o shell padrão"
@@ -1088,6 +1146,10 @@ configure_zsh_config() {
   # Configuração básica do zsh
   cat > "$zshrc_file" << 'EOF'
 # Zsh configuration - Ubuntu Setup
+
+# PATH configuration
+export PATH="$HOME/.local/bin:$PATH"
+
 # History configuration
 HISTFILE=~/.zsh_history
 HISTSIZE=10000
@@ -1764,74 +1826,78 @@ configure_gnome_settings() {
 }
 
 configure_dash_to_dock() {
-  print_info "Configurando dash-to-dock..."
+  print_info "Configurando dock do Ubuntu..."
   
-  # Verificar se dash-to-dock está disponível
-  if ! gsettings list-schemas | grep -q "org.gnome.shell.extensions.dash-to-dock"; then
-    print_warn "Dash-to-dock não está instalado, pulando configuração"
-    return 0
-  fi
-  
-  # Habilitar a extensão primeiro
-  if command -v gnome-extensions >/dev/null 2>&1; then
-    if gnome-extensions list | grep -q "dash-to-dock@micxgx.gmail.com"; then
-      gnome-extensions enable "dash-to-dock@micxgx.gmail.com" 2>/dev/null || true
-      print_info "Dash-to-dock habilitado"
+  # Verificar se ubuntu-dock está disponível (padrão do Ubuntu)
+  if gsettings list-schemas | grep -q "org.gnome.shell.extensions.ubuntu-dock"; then
+    print_info "Configurando Ubuntu Dock (nativo)..."
+    local dock_schema="org.gnome.shell.extensions.ubuntu-dock"
+  elif gsettings list-schemas | grep -q "org.gnome.shell.extensions.dash-to-dock"; then
+    print_info "Configurando Dash-to-dock..."
+    local dock_schema="org.gnome.shell.extensions.dash-to-dock"
+    
+    # Habilitar dash-to-dock se necessário
+    if command -v gnome-extensions >/dev/null 2>&1; then
+      if gnome-extensions list | grep -q "dash-to-dock@micxgx.gmail.com"; then
+        gnome-extensions enable "dash-to-dock@micxgx.gmail.com" 2>/dev/null || true
+        print_info "Dash-to-dock habilitado"
+      fi
     fi
+  else
+    print_warn "Nenhuma extensão de dock encontrada, pulando configuração"
+    return 0
   fi
   
   # Configurações de posicionamento
   print_info "Configurando posição: parte inferior da tela"
-  gsettings set org.gnome.shell.extensions.dash-to-dock dock-position 'BOTTOM'
-  gsettings set org.gnome.shell.extensions.dash-to-dock preferred-monitor -1  # Monitor primário
+  gsettings set "$dock_schema" dock-position 'BOTTOM'
   
   # Configurações de auto hide
   print_info "Configurando auto hide..."
-  gsettings set org.gnome.shell.extensions.dash-to-dock dock-fixed false  # Permite auto hide
-  gsettings set org.gnome.shell.extensions.dash-to-dock autohide true     # Ativa auto hide
-  gsettings set org.gnome.shell.extensions.dash-to-dock intellihide false # Desativa intellihide (conflita com autohide)
+  gsettings set "$dock_schema" dock-fixed false     # Permite auto hide
+  gsettings set "$dock_schema" autohide true        # Ativa auto hide
+  gsettings set "$dock_schema" intellihide false    # Desativa intellihide
   
   # Configurações de comportamento do auto hide
-  gsettings set org.gnome.shell.extensions.dash-to-dock autohide-in-fullscreen true  # Hide em fullscreen
-  gsettings set org.gnome.shell.extensions.dash-to-dock require-pressure-to-show true  # Pressão para mostrar
-  gsettings set org.gnome.shell.extensions.dash-to-dock pressure-threshold 100.0      # Limite de pressão
-  gsettings set org.gnome.shell.extensions.dash-to-dock animation-time 0.2            # Tempo de animação
-  gsettings set org.gnome.shell.extensions.dash-to-dock hide-delay 0.2                # Delay para esconder
-  gsettings set org.gnome.shell.extensions.dash-to-dock show-delay 0.25               # Delay para mostrar
+  gsettings set "$dock_schema" autohide-in-fullscreen true      # Hide em fullscreen
+  gsettings set "$dock_schema" require-pressure-to-show true   # Pressão para mostrar
+  gsettings set "$dock_schema" pressure-threshold 100.0        # Limite de pressão
+  gsettings set "$dock_schema" animation-time 0.2              # Tempo de animação
+  gsettings set "$dock_schema" hide-delay 0.2                  # Delay para esconder
+  gsettings set "$dock_schema" show-delay 0.25                 # Delay para mostrar
   
   # Configurações de aparência
   print_info "Configurando aparência do dock..."
-  gsettings set org.gnome.shell.extensions.dash-to-dock dash-max-icon-size 48        # Tamanho dos ícones
-  gsettings set org.gnome.shell.extensions.dash-to-dock icon-size-fixed true         # Tamanho fixo dos ícones
-  gsettings set org.gnome.shell.extensions.dash-to-dock show-favorites true          # Mostrar favoritos
-  gsettings set org.gnome.shell.extensions.dash-to-dock show-running true            # Mostrar aplicações em execução
-  gsettings set org.gnome.shell.extensions.dash-to-dock show-apps-at-top false       # Apps button no final
+  gsettings set "$dock_schema" dash-max-icon-size 48           # Tamanho dos ícones
+  gsettings set "$dock_schema" icon-size-fixed true            # Tamanho fixo dos ícones
+  gsettings set "$dock_schema" show-favorites true             # Mostrar favoritos
+  gsettings set "$dock_schema" show-running true               # Mostrar aplicações em execução
+  gsettings set "$dock_schema" show-apps-at-top false          # Apps button no final
   
   # Configurações de transparência e estilo
-  gsettings set org.gnome.shell.extensions.dash-to-dock transparency-mode 'DYNAMIC'  # Transparência dinâmica
-  gsettings set org.gnome.shell.extensions.dash-to-dock background-opacity 0.8       # Opacidade de fundo
-  gsettings set org.gnome.shell.extensions.dash-to-dock customize-alphas true        # Personalizar transparência
-  gsettings set org.gnome.shell.extensions.dash-to-dock min-alpha 0.4                # Transparência mínima
-  gsettings set org.gnome.shell.extensions.dash-to-dock max-alpha 0.8                # Transparência máxima
+  gsettings set "$dock_schema" transparency-mode 'DYNAMIC'     # Transparência dinâmica
+  gsettings set "$dock_schema" background-opacity 0.8          # Opacidade de fundo
+  gsettings set "$dock_schema" customize-alphas true           # Personalizar transparência
+  gsettings set "$dock_schema" min-alpha 0.4                   # Transparência mínima
+  gsettings set "$dock_schema" max-alpha 0.8                   # Transparência máxima
   
   # Configurações de comportamento
-  gsettings set org.gnome.shell.extensions.dash-to-dock click-action 'TOGGLE'        # Clique para alternar janelas
-  gsettings set org.gnome.shell.extensions.dash-to-dock scroll-action 'DO_NOTHING'   # Scroll não faz nada
-  gsettings set org.gnome.shell.extensions.dash-to-dock middle-click-action 'LAUNCH' # Clique do meio abre nova instância
+  gsettings set "$dock_schema" click-action 'TOGGLE'           # Clique para alternar janelas
+  gsettings set "$dock_schema" scroll-action 'DO_NOTHING'      # Scroll não faz nada
+  gsettings set "$dock_schema" middle-click-action 'LAUNCH'    # Clique do meio abre nova instância
   
   # Configurações de multi-monitor
-  gsettings set org.gnome.shell.extensions.dash-to-dock multi-monitor false          # Apenas no monitor principal
+  gsettings set "$dock_schema" multi-monitor false             # Apenas no monitor principal
   
   # Configurações de altura e tamanho
-  gsettings set org.gnome.shell.extensions.dash-to-dock height-fraction 0.9          # 90% da altura da tela
-  gsettings set org.gnome.shell.extensions.dash-to-dock dock-fixed false             # Tamanho dinâmico
+  gsettings set "$dock_schema" height-fraction 0.9             # 90% da altura da tela
   
-  print_info "Dash-to-dock configurado:"
+  print_info "Dock configurado:"
+  print_info "- Extensão: $(basename "$dock_schema")"
   print_info "- Posição: Parte inferior da tela"
   print_info "- Auto hide: Ativado com pressão para mostrar"
   print_info "- Transparência: Dinâmica"
   print_info "- Tamanho dos ícones: 48px"
-  print_info "- Clique: Alterna entre janelas"
   
   print_warn "Reinicie o GNOME Shell (Alt+F2, digite 'r', Enter) ou faça logout/login para aplicar todas as mudanças"
 }
