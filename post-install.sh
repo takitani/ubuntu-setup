@@ -31,6 +31,7 @@ trap 'cleanup' EXIT
 
 auto_install_flatpak=true
 auto_install_snap=true
+auto_install_docker=true
 
 usage() {
   cat <<EOF
@@ -39,6 +40,7 @@ Uso: $0 [opções]
 Opções:
   --no-flatpak       Não instalar/configurar Flatpak
   --no-snap          Não instalar/configurar Snap
+  --no-docker        Não instalar Docker (útil para VMs de teste)
   -h, --help         Mostrar esta ajuda
 
 Comportamento:
@@ -52,6 +54,7 @@ while [[ ${1-} ]]; do
   case "$1" in
     --no-flatpak) auto_install_flatpak=false ;;
     --no-snap) auto_install_snap=false ;;
+    --no-docker) auto_install_docker=false ;;
     -h|--help) usage; exit 0 ;;
     *) print_error "Opção desconhecida: $1"; usage; exit 1 ;;
   esac
@@ -84,25 +87,56 @@ SUDO_PID=$!
 
 create_backup() {
   local file="$1"
-  local suffix="${2:-$(date +%Y%m%d%H%M%S)}"
-  
-  if [[ -f "$file" ]] && [[ ! -f "$file.bak.$suffix" ]]; then
-    # Usar sudo se o arquivo for do sistema (em /etc, /usr, etc.)
-    if [[ "$file" == /etc/* ]] || [[ "$file" == /usr/* ]] || [[ "$file" == /var/* ]]; then
-      sudo cp "$file" "$file.bak.$suffix" 2>/dev/null || {
-        print_warn "Não foi possível criar backup de $file (sem permissão)"
-        return 1
-      }
-    else
-      cp "$file" "$file.bak.$suffix" 2>/dev/null || {
-        print_warn "Não foi possível criar backup de $file"
-        return 1
-      }
-    fi
-    print_info "Backup criado: $file.bak.$suffix"
+  local suffix="${2:-$(date +%Y%m%d-%H%M%S)}"
+
+  # Se o arquivo não existe, não precisa de backup
+  if [[ ! -f "$file" ]]; then
+    print_info "Arquivo $file não existe, backup não necessário"
     return 0
   fi
-  return 1
+
+  # Para arquivos do APT, salvar backups fora de /etc/apt para evitar avisos do apt
+  if [[ "$file" == /etc/apt/* ]]; then
+    local backup_root="/var/backups/ubuntu-setup"
+    local rel_path="${file#/}"            # ex: etc/apt/.../file
+    local backup_file="$backup_root/$rel_path.backup-$suffix"
+    local backup_dir
+    backup_dir="$(dirname "$backup_file")"
+    # Garantir diretório e copiar com sudo
+    if sudo install -d -m 755 "$backup_dir" 2>/dev/null && sudo cp "$file" "$backup_file" 2>/dev/null; then
+      print_info "✓ Backup criado: $backup_file"
+      return 0
+    else
+      print_warn "✗ Falha ao criar backup de $file (APT)"
+      return 1
+    fi
+  fi
+
+  # Para demais arquivos, manter estratégia anterior no mesmo diretório
+  local backup_file="$file.backup-$suffix"
+  local counter=1
+  while [[ -f "$backup_file" ]]; do
+    backup_file="$file.backup-$suffix-$counter"
+    ((counter++))
+  done
+
+  if [[ "$file" == /etc/* ]] || [[ "$file" == /usr/* ]] || [[ "$file" == /var/* ]] || [[ "$file" == /opt/* ]]; then
+    if sudo cp "$file" "$backup_file" 2>/dev/null; then
+      print_info "✓ Backup criado: $backup_file"
+      return 0
+    else
+      print_warn "✗ Falha ao criar backup de $file (arquivo do sistema)"
+      return 1
+    fi
+  else
+    if cp "$file" "$backup_file" 2>/dev/null; then
+      print_info "✓ Backup criado: $backup_file"
+      return 0
+    else
+      print_warn "✗ Falha ao criar backup de $file (arquivo do usuário)"
+      return 1
+    fi
+  fi
 }
 
 main() {
@@ -145,6 +179,19 @@ update_system() {
   print_info "Pré-configurando pacotes para instalação não-interativa..."
   echo 'iperf3 iperf3/start_daemon boolean false' | sudo debconf-set-selections 2>/dev/null || true
   
+  # Verificar e corrigir repositórios duplicados
+  print_info "Verificando repositórios duplicados..."
+  if [[ -f /etc/apt/sources.list.d/ubuntu.sources && -s /etc/apt/sources.list ]]; then
+    # Verificar se há conteúdo duplicado
+    if grep -q "main.*restricted.*universe.*multiverse" /etc/apt/sources.list 2>/dev/null; then
+      print_info "Removendo sources.list antigo para evitar duplicação..."
+      create_backup /etc/apt/sources.list "duplicate-fix" || print_warn "Continuando sem backup"
+      # Criar sources.list vazio mas manter o arquivo
+      echo "# Repositórios movidos para /etc/apt/sources.list.d/ubuntu.sources" | sudo tee /etc/apt/sources.list > /dev/null
+      print_info "Sources.list antigo removido, usando formato moderno"
+    fi
+  fi
+  
   # Modernizar formato dos sources para o novo padrão do Ubuntu
   print_info "Modernizando formato dos repositórios APT..."
   if command -v apt >/dev/null 2>&1 && apt --version 2>&1 | grep -q "apt 2."; then
@@ -164,6 +211,9 @@ update_system() {
   print_info "Corrigindo dependências quebradas..."
   sudo apt install -f -y
   
+  print_info "Instalando ferramentas essenciais de desenvolvimento..."
+  sudo apt install -y build-essential
+  
   print_info "Removendo pacotes desnecessários..."
   sudo apt autoremove -y
   sudo apt autoclean
@@ -178,14 +228,36 @@ fix_broken_repositories() {
   local ubuntu_version=$(lsb_release -rs 2>/dev/null)
   local ubuntu_codename=$(lsb_release -cs 2>/dev/null)
   
+  # Remover PPAs problemáticos no Ubuntu 25.04
   if [[ "$ubuntu_version" == "25.04" ]] || [[ "$ubuntu_codename" == "plucky" ]]; then
-    print_info "Ubuntu 25.04 detectado, aplicando correções específicas..."
+    print_info "Ubuntu 25.04 detectado, removendo PPAs incompatíveis..."
     
-    # Backup dos sources atuais
-    sudo cp /etc/apt/sources.list /etc/apt/sources.list.backup-$(date +%Y%m%d) 2>/dev/null || true
+    # Lista de PPAs problemáticos no Ubuntu 25.04
+    local problematic_ppas=(
+      "/etc/apt/sources.list.d/neovim-ppa-ubuntu-stable-plucky.sources"
+      "/etc/apt/sources.list.d/neovim-ppa-ubuntu-stable-plucky.list"
+    )
     
-    # Criar sources.list mais conservador para Ubuntu 25.04
-    sudo tee /etc/apt/sources.list > /dev/null << EOF
+    for ppa_file in "${problematic_ppas[@]}"; do
+      if [[ -f "$ppa_file" ]]; then
+        create_backup "$ppa_file" "remove-ppa" || true
+        sudo rm -f "$ppa_file"
+        print_info "Removido PPA problemático: $(basename "$ppa_file")"
+      fi
+    done
+    
+    print_info "Aplicando correções específicas para Ubuntu 25.04..."
+
+    # Se já existe o formato moderno (ubuntu.sources), evitar duplicação
+    if [[ -f /etc/apt/sources.list.d/ubuntu.sources ]]; then
+      print_info "Formato moderno detectado (ubuntu.sources). Limpando sources.list para evitar duplicação..."
+      create_backup /etc/apt/sources.list "fix-repos" || print_warn "Continuando sem backup do sources.list"
+      echo "# Repositórios gerenciados por /etc/apt/sources.list.d/ubuntu.sources" | sudo tee /etc/apt/sources.list > /dev/null
+      print_info "Sources.list limpo; usando apenas ubuntu.sources"
+    else
+      # Caso não exista ubuntu.sources, criar um sources.list conservador
+      create_backup /etc/apt/sources.list "fix-repos" || print_warn "Continuando sem backup do sources.list"
+      sudo tee /etc/apt/sources.list > /dev/null << EOF
 # Ubuntu 25.04 (Plucky Puffin) - Repositórios principais
 deb http://archive.ubuntu.com/ubuntu/ plucky main restricted universe multiverse
 deb-src http://archive.ubuntu.com/ubuntu/ plucky main restricted universe multiverse
@@ -202,8 +274,17 @@ deb-src http://security.ubuntu.com/ubuntu/ plucky-security main restricted unive
 deb http://archive.ubuntu.com/ubuntu/ plucky-backports main restricted universe multiverse
 deb-src http://archive.ubuntu.com/ubuntu/ plucky-backports main restricted universe multiverse
 EOF
-    
-    print_info "Sources.list atualizado para Ubuntu 25.04"
+      print_info "Sources.list atualizado para Ubuntu 25.04"
+    fi
+
+    # Mover backups antigos com extensões inválidas para fora do diretório APT
+    local backup_root="/var/backups/ubuntu-setup/etc/apt/sources.list.d"
+    sudo install -d -m 755 "$backup_root" 2>/dev/null || true
+    for f in /etc/apt/sources.list.d/*.backup-*; do
+      [[ -e "$f" ]] || continue
+      print_info "Movendo arquivo de backup inválido: $(basename "$f")"
+      sudo mv "$f" "$backup_root/" 2>/dev/null || true
+    done
   fi
   
   # Limpar cache de apt
@@ -217,10 +298,28 @@ EOF
 setup_repositories() {
   print_step "Configurando repositórios"
   
-  # Habilitar universe e multiverse
-  print_info "Habilitando repositórios universe e multiverse..."
-  sudo add-apt-repository -y universe
-  sudo add-apt-repository -y multiverse
+  # Helper: habilitar componente apenas se estiver ausente
+  ensure_apt_component() {
+    local component="$1"
+    # Já ativo no formato moderno?
+    if [[ -f /etc/apt/sources.list.d/ubuntu.sources ]]; then
+      if grep -Eq "^Components: .*\\b${component}\\b" /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null; then
+        print_info "Componente ${component} já ativo no ubuntu.sources"
+        return 0
+      fi
+    fi
+    # Já ativo no sources.list clássico?
+    if [[ -s /etc/apt/sources.list ]] && grep -Eq "^[[:space:]]*deb .*\\b${component}\\b" /etc/apt/sources.list 2>/dev/null; then
+      print_info "Componente ${component} já ativo no sources.list"
+      return 0
+    fi
+    print_info "Habilitando componente ${component}..."
+    sudo add-apt-repository -y "${component}"
+  }
+
+  # Habilitar universe e multiverse (idempotente)
+  ensure_apt_component universe
+  ensure_apt_component multiverse
   
   # Configurar Flatpak se solicitado
   if [[ "$auto_install_flatpak" == true ]]; then
@@ -336,7 +435,11 @@ install_desktop_apps() {
   install_localsend || failed_apps+=("LocalSend")
   
   # Docker
-  install_docker || failed_apps+=("Docker")
+  if [[ "$auto_install_docker" == true ]]; then
+    install_docker || failed_apps+=("Docker")
+  else
+    print_info "Pulando instalação do Docker (--no-docker especificado)"
+  fi
   
   # Lazydocker
   install_lazydocker || failed_apps+=("Lazydocker")
@@ -1058,7 +1161,8 @@ install_mise() {
   
   # Baixar e instalar chave GPG
   if wget -qO - https://mise.jdx.dev/gpg-key.pub | gpg --dearmor | sudo tee /etc/apt/keyrings/mise-archive-keyring.gpg 1> /dev/null; then
-    # Adicionar repositório
+    # Adicionar repositório (criar backup se já existir)
+    create_backup /etc/apt/sources.list.d/mise.list "mise-setup" 2>/dev/null || true
     echo "deb [signed-by=/etc/apt/keyrings/mise-archive-keyring.gpg arch=amd64] https://mise.jdx.dev/deb stable main" | sudo tee /etc/apt/sources.list.d/mise.list
     
     # Atualizar e instalar
@@ -1259,6 +1363,7 @@ install_zsh_starship_zoxide() {
       
       # Adicionar zsh aos shells válidos se não estiver
       if ! grep -q "$zsh_path" /etc/shells 2>/dev/null; then
+        create_backup /etc/shells "zsh-setup" || print_warn "Continuando sem backup de /etc/shells"
         echo "$zsh_path" | sudo tee -a /etc/shells >/dev/null
         print_info "Zsh adicionado à lista de shells válidos"
       fi
@@ -1542,7 +1647,7 @@ format = '[ $symbol ($version) ]($style)'
 disabled = false
 time_format = "%H:%M" # Hour:Minute Format
 style = "bg:#81A1C1 fg:#2E3440"
-format = '[ 🕐 $time ]($style)'
+format = '[ ⚡ $time ]($style)'
 EOF
 
   print_info "Configuração personalizada do starship criada em $starship_config"
@@ -1928,26 +2033,30 @@ install_neovim() {
     return 0
   fi
 
-  print_info "Instalando Neovim via PPA oficial..."
+  print_info "Instalando Neovim (método Omakub - última versão estável)..."
   
-  # Adicionar PPA estável do Neovim
-  if sudo add-apt-repository ppa:neovim-ppa/stable -y 2>/dev/null; then
-    print_info "PPA do Neovim adicionado com sucesso"
-  else
-    print_warn "Falha ao adicionar PPA, tentando repositório padrão"
-    sudo apt update
-    sudo apt install -y neovim
-    return $?
-  fi
+  # Baixar e instalar Neovim da release oficial (método Omakub)
+  cd /tmp
+  wget -O nvim.tar.gz "https://github.com/neovim/neovim/releases/download/stable/nvim-linux-x86_64.tar.gz"
+  tar -xf nvim.tar.gz
+  sudo install nvim-linux-x86_64/bin/nvim /usr/local/bin/nvim
+  sudo cp -R nvim-linux-x86_64/lib /usr/local/
+  sudo cp -R nvim-linux-x86_64/share /usr/local/
+  rm -rf nvim-linux-x86_64 nvim.tar.gz
+  cd -
   
-  # Atualizar repositórios e instalar
-  sudo apt update
-  sudo apt install -y neovim
+  # Instalar dependências para resolver avisos do :checkhealth do LazyVim
+  print_info "Instalando dependências do Neovim (luarocks e tree-sitter-cli)..."
+  sudo apt install -y luarocks tree-sitter-cli
   
   # Verificar instalação
   if command -v nvim >/dev/null 2>&1; then
     local version=$(nvim --version | head -n1 | cut -d' ' -f2)
     print_info "Neovim versão $version instalado com sucesso!"
+    
+    # Configurar LazyVim se ainda não foi configurado
+    configure_lazyvim_omakub_style
+    
     return 0
   else
     print_warn "Falha ao instalar Neovim"
@@ -1955,60 +2064,76 @@ install_neovim() {
   fi
 }
 
+configure_lazyvim_omakub_style() {
+  # Apenas configurar se Neovim nunca foi executado antes
+  if [ -d "$HOME/.config/nvim" ]; then
+    print_info "Configuração do Neovim já existe. Pulando configuração do LazyVim."
+    return 0
+  fi
+  
+  local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  
+  print_info "Configurando LazyVim com tema e configurações Omakub..."
+  
+  # Usar LazyVim
+  git clone https://github.com/LazyVim/starter ~/.config/nvim
+  # Remover pasta .git para poder adicionar ao seu próprio repo depois
+  rm -rf ~/.config/nvim/.git
+  
+  # Criar diretório para configurações after
+  mkdir -p ~/.config/nvim/plugin/after
+  
+  # Copiar arquivo de transparência
+  cp "$script_dir/configs/neovim/transparency.lua" ~/.config/nvim/plugin/after/
+  
+  # Configurar tema Tokyo Night por padrão
+  mkdir -p ~/.config/nvim/lua/plugins
+  cp "$script_dir/configs/neovim/theme.lua" ~/.config/nvim/lua/plugins/
+  
+  # Desativar scroll animado
+  cp "$script_dir/configs/neovim/snacks-animated-scrolling-off.lua" ~/.config/nvim/lua/plugins/
+  
+  # Desativar números de linha relativos
+  echo "vim.opt.relativenumber = false" >> ~/.config/nvim/lua/config/options.lua
+  
+  # Garantir que editor.neo-tree seja usado por padrão
+  cp "$script_dir/configs/neovim/lazyvim.json" ~/.config/nvim/
+  
+  print_info "LazyVim configurado com sucesso com tema Tokyo Night e transparência!"
+  print_info "Execute 'nvim' para iniciar e aguarde a instalação automática dos plugins"
+  
+  # Criar launcher no desktop e dash
+  create_neovim_desktop_launcher
+}
+
+create_neovim_desktop_launcher() {
+  local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  
+  print_info "Criando launcher do Neovim para desktop e dash..."
+  
+  # Criar diretório de aplicações locais se não existir
+  mkdir -p ~/.local/share/applications
+  
+  # Remover launcher antigo do sistema se existir
+  sudo rm -f /usr/share/applications/nvim.desktop 2>/dev/null || true
+  
+  # Executar script de criação do launcher
+  source "$script_dir/applications/Neovim.sh"
+  
+  # Atualizar cache do desktop
+  update-desktop-database ~/.local/share/applications/ 2>/dev/null || true
+  
+  print_info "Launcher do Neovim criado com sucesso!"
+}
+
+# Manter função install_lazyvim para compatibilidade
 install_lazyvim() {
   if [[ ! -x "$(command -v nvim)" ]]; then
     print_warn "Neovim não está instalado. Execute install_neovim() primeiro."
     return 1
   fi
-
-  local nvim_config_dir="$HOME/.config/nvim"
-  local backup_suffix=$(date +%Y%m%d%H%M%S)
   
-  print_info "Configurando LazyVim..."
-  
-  # Backup da configuração existente se houver
-  if [[ -d "$nvim_config_dir" ]]; then
-    print_info "Fazendo backup da configuração existente do Neovim..."
-    
-    # Backup de todos os diretórios relacionados ao Neovim
-    [[ -d "$HOME/.config/nvim" ]] && mv "$HOME/.config/nvim" "$HOME/.config/nvim.bak.$backup_suffix"
-    [[ -d "$HOME/.local/share/nvim" ]] && mv "$HOME/.local/share/nvim" "$HOME/.local/share/nvim.bak.$backup_suffix"
-    [[ -d "$HOME/.local/state/nvim" ]] && mv "$HOME/.local/state/nvim" "$HOME/.local/state/nvim.bak.$backup_suffix"
-    [[ -d "$HOME/.cache/nvim" ]] && mv "$HOME/.cache/nvim" "$HOME/.cache/nvim.bak.$backup_suffix"
-    
-    print_info "Backup criado com sufixo: $backup_suffix"
-  fi
-  
-  # Clonar starter template do LazyVim
-  print_info "Clonando LazyVim starter template..."
-  if git clone https://github.com/LazyVim/starter "$nvim_config_dir" 2>/dev/null; then
-    print_info "LazyVim starter clonado com sucesso"
-  else
-    print_warn "Falha ao clonar LazyVim starter"
-    return 1
-  fi
-  
-  # Remover .git do template
-  rm -rf "$nvim_config_dir/.git"
-  
-  # Verificar se a configuração foi criada
-  if [[ -f "$nvim_config_dir/init.lua" ]]; then
-    print_info "LazyVim configurado com sucesso!"
-    print_info "IMPORTANTE: Execute 'nvim' e aguarde a instalação automática dos plugins"
-    print_info "Após a instalação, execute ':LazyHealth' para verificar a configuração"
-    
-    # Criar um script de first-run para instalar plugins automaticamente
-    cat > "$nvim_config_dir/first-run.lua" << 'EOF'
--- First run script to install plugins automatically
-vim.cmd("Lazy! sync")
-print("LazyVim plugins instalados! Execute :LazyHealth para verificar.")
-EOF
-    
-    return 0
-  else
-    print_warn "Falha ao configurar LazyVim"
-    return 1
-  fi
+  configure_lazyvim_omakub_style
 }
 
 # Placeholder para as demais funções
@@ -2307,6 +2432,11 @@ configure_gnome_settings() {
   gsettings set org.gnome.desktop.wm.preferences focus-mode 'click'
   gsettings set org.gnome.desktop.wm.preferences auto-raise false
   
+  # Atalhos do window manager
+  print_info "Configurando atalhos de janelas..."
+  # Super+W para fechar janela
+  gsettings set org.gnome.desktop.wm.keybindings close "['<Super>w', '<Alt>F4']" || true
+  
   # Área de trabalho e dock
   print_info "Configurando área de trabalho..."
   
@@ -2474,52 +2604,42 @@ configure_autostart() {
   local autostart_dir="$HOME/.config/autostart"
   mkdir -p "$autostart_dir"
   
-  # Slack autostart
-  if command -v slack >/dev/null 2>&1; then
-    local slack_desktop="$autostart_dir/slack-autostart.desktop"
-    if [[ ! -f "$slack_desktop" ]]; then
-      cat > "$slack_desktop" << 'EOF'
+  # ZapZap autostart (apenas ele deve ter autostart)
+  if command -v com.rtosta.zapzap >/dev/null 2>&1 || flatpak list | grep -q com.rtosta.zapzap; then
+    local zapzap_desktop="$autostart_dir/zapzap-autostart.desktop"
+    if [[ ! -f "$zapzap_desktop" ]]; then
+      cat > "$zapzap_desktop" << 'EOF'
 [Desktop Entry]
 Type=Application
-Name=Slack (Autostart)
-Exec=slack --startup
+Name=ZapZap (Autostart)
+Exec=flatpak run com.rtosta.zapzap
 Hidden=false
 NoDisplay=false
 X-GNOME-Autostart-enabled=true
-X-GNOME-Autostart-Delay=10
+X-GNOME-Autostart-Delay=5
 EOF
-      print_info "Slack autostart configurado (delay 10s)"
+      print_info "ZapZap autostart configurado (delay 5s)"
     else
-      print_info "Slack autostart já está configurado"
+      print_info "ZapZap autostart já está configurado"
     fi
   fi
   
-  # Discord autostart
-  if command -v discord >/dev/null 2>&1; then
-    local discord_desktop="$autostart_dir/discord-autostart.desktop"
-    if [[ ! -f "$discord_desktop" ]]; then
-      cat > "$discord_desktop" << 'EOF'
-[Desktop Entry]
-Type=Application
-Name=Discord (Autostart)
-Exec=discord --start-minimized
-Hidden=false
-NoDisplay=false
-X-GNOME-Autostart-enabled=true
-X-GNOME-Autostart-Delay=15
-EOF
-      print_info "Discord autostart configurado (delay 15s, minimizado)"
-    else
-      print_info "Discord autostart já está configurado"
+  # Remover autostarts desnecessários se existirem
+  local unwanted_autostarts=("$autostart_dir/slack-autostart.desktop" "$autostart_dir/discord-autostart.desktop")
+  for autostart_file in "${unwanted_autostarts[@]}"; do
+    if [[ -f "$autostart_file" ]]; then
+      create_backup "$autostart_file" "remove-autostart" || true
+      rm -f "$autostart_file"
+      print_info "Removido autostart desnecessário: $(basename "$autostart_file")"
     fi
-  fi
+  done
   
   # Configurar aplicações favoritas no dock
   print_info "Configurando aplicações favoritas..."
   local favorites="['org.gnome.Nautilus.desktop', 'google-chrome.desktop', 'code.desktop', 'org.gnome.Terminal.desktop', 'rider_rider.desktop', 'datagrip_datagrip.desktop', 'io.missioncenter.MissionCenter.desktop', 'com.getpostman.Postman.desktop', 'slack.desktop', 'discord.desktop', 'com.rtosta.zapzap.desktop', 'localsend_app.desktop']"
   gsettings set org.gnome.shell favorite-apps "$favorites"
   
-  print_info "Autostart configurado para aplicações selecionadas."
+  print_info "Autostart configurado apenas para ZapZap."
 }
 
 main "$@"
