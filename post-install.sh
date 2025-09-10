@@ -85,8 +85,11 @@ main() {
   setup_repositories
   install_desktop_apps
   set_locale_ptbr
+  print_info "DEBUG: MAIN: Chamando configure_keyboard_layout"
   configure_keyboard_layout
+  print_info "DEBUG: MAIN: configure_keyboard_layout terminou, chamando configure_system_settings"
   configure_system_settings
+  print_info "DEBUG: MAIN: configure_system_settings terminou, chamando configure_gnome_settings"
   configure_gnome_settings
   configure_gnome_extensions
   configure_autostart
@@ -1617,53 +1620,69 @@ configure_keyboard_layout() {
   # Layout principal: US International
   # Layout secundário: BR (para alternância)
   
-  local current_sources=$(gsettings get org.gnome.desktop.input-sources sources)
+  print_info "DEBUG: Obtendo configurações atuais de layout..."
+  local current_sources=$(gsettings get org.gnome.desktop.input-sources sources 2>/dev/null || echo "erro")
   local desired_sources="[('xkb', 'us+intl'), ('xkb', 'br')]"
+  print_info "DEBUG: Current sources: $current_sources"
   
-  if [[ "$current_sources" != "$desired_sources" ]]; then
+  if [[ "$current_sources" != "$desired_sources" ]] && [[ "$current_sources" != "erro" ]]; then
     print_info "Configurando layouts de teclado: US International + BR"
-    gsettings set org.gnome.desktop.input-sources sources "$desired_sources"
-    gsettings set org.gnome.desktop.input-sources current 0
+    gsettings set org.gnome.desktop.input-sources sources "$desired_sources" || print_warn "Falha ao definir sources"
+    gsettings set org.gnome.desktop.input-sources current 0 || print_warn "Falha ao definir current"
     print_info "Layouts configurados: US-Intl (principal) + BR (secundário)"
   else
-    print_info "Layouts de teclado já estão configurados corretamente"
+    print_info "Layouts de teclado já estão configurados corretamente ou erro na verificação"
   fi
   
+  print_info "DEBUG: Configurando atalho de alternância..."
   # Configurar atalho para alternar layouts (Super+Space)
-  local current_switch=$(gsettings get org.gnome.desktop.wm.keybindings switch-input-source)
+  local current_switch=$(gsettings get org.gnome.desktop.wm.keybindings switch-input-source 2>/dev/null || echo "erro")
   local desired_switch="['<Super>space']"
+  print_info "DEBUG: Current switch: $current_switch"
   
-  if [[ "$current_switch" != "$desired_switch" ]]; then
+  if [[ "$current_switch" != "$desired_switch" ]] && [[ "$current_switch" != "erro" ]]; then
     print_info "Configurando atalho Super+Space para alternar layouts"
-    gsettings set org.gnome.desktop.wm.keybindings switch-input-source "$desired_switch"
+    gsettings set org.gnome.desktop.wm.keybindings switch-input-source "$desired_switch" || print_warn "Falha ao definir switch"
   else
-    print_info "Atalho de alternância já está configurado"
+    print_info "Atalho de alternância já está configurado ou erro na verificação"
   fi
 
+  print_info "DEBUG: Iniciando configuração de cedilha..."
   # Configurar .XCompose para cedilha correto
-  configure_xcompose_cedilla
+  configure_xcompose_cedilla || print_warn "Falha na configuração de cedilha"
   
+  print_info "DEBUG: Finalizando configuração de teclado..."
   print_info "Layout de teclado configurado:"
   print_info "- Layout principal: US International"
   print_info "- Layout secundário: BR" 
   print_info "- Alternância: Super + Space"
   print_info "- Cedilha: ' + c = ç"
+  print_info "DEBUG: configure_keyboard_layout concluída"
+  print_info "DEBUG: ===== SAINDO DE configure_keyboard_layout ====="
 }
 
 configure_xcompose_cedilla() {
+  print_info "DEBUG: Iniciando configure_xcompose_cedilla"
   local xcompose_file="$HOME/.XCompose"
   local needs_cedilla_config=true
   
+  print_info "DEBUG: Verificando arquivo existente: $xcompose_file"
+  print_info "DEBUG: Arquivo existe: $([ -f "$xcompose_file" ] && echo "SIM" || echo "NÃO")"
+  
   # Verifica se já tem configuração de cedilha
-  if [[ -f "$xcompose_file" ]] && grep -q "ccedilla" "$xcompose_file"; then
+  if [[ -f "$xcompose_file" ]] && grep -q "ccedilla" "$xcompose_file" 2>/dev/null; then
     needs_cedilla_config=false
     print_info ".XCompose já configurado para cedilha"
   fi
   
+  print_info "DEBUG: Precisa configurar cedilha: $needs_cedilla_config"
+  
   if [[ "$needs_cedilla_config" == true ]]; then
+    print_info "DEBUG: Criando backup se necessário..."
     # Faz backup se o arquivo existe
-    create_backup "$xcompose_file" "cedilla"
+    create_backup "$xcompose_file" "cedilla" || print_info "DEBUG: Backup não foi necessário ou falhou"
     
+    print_info "DEBUG: Criando arquivo .XCompose..."
     # Cria configuração de cedilha
     cat > "$xcompose_file" << 'EOF'
 include "%L"
@@ -1679,19 +1698,28 @@ include "%L"
 <'> <C> : "Ç" Ccedilla
 
 EOF
+    print_info "DEBUG: Arquivo .XCompose criado com sucesso"
     print_info ".XCompose configurado para cedilha correto"
   fi
   
+  print_info "DEBUG: Configurando GTK Compose..."
   # Configura GTK Compose file também
   local gtk_compose="$HOME/.config/gtk-3.0/Compose"
+  print_info "DEBUG: GTK Compose path: $gtk_compose"
+  
   if [[ ! -f "$gtk_compose" ]] || ! grep -q "ccedilla" "$gtk_compose" 2>/dev/null; then
+    print_info "DEBUG: Criando diretório GTK3..."
     mkdir -p "$HOME/.config/gtk-3.0"
+    print_info "DEBUG: Copiando arquivo para GTK3..."
     cp "$xcompose_file" "$gtk_compose" 2>/dev/null || true
     print_info "GTK3 Compose configurado para cedilha"
   fi
+  
+  print_info "DEBUG: configure_xcompose_cedilla concluída"
 }
 
 configure_system_settings() {
+  print_info "DEBUG: ===== INICIANDO configure_system_settings ====="
   print_step "Configurando configurações do sistema"
   
   # Configurar Ghostty como terminal padrão do sistema
