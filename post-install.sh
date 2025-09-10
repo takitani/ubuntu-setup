@@ -1945,10 +1945,14 @@ configure_dash_to_dock() {
   # Configurações básicas e seguras do dock
   print_info "Configurando dock básico..."
   
-  # Apenas configurações essenciais que raramente causam erro
+  # Configurações essenciais para o dock funcionar com mouse
   gsettings set "$dock_schema" dock-position 'BOTTOM' 2>/dev/null || true
   gsettings set "$dock_schema" autohide true 2>/dev/null || true
   gsettings set "$dock_schema" dock-fixed false 2>/dev/null || true
+  
+  # Configurações mínimas para hover funcionar (valores seguros)
+  gsettings set "$dock_schema" intellihide false 2>/dev/null || true
+  gsettings set "$dock_schema" require-pressure-to-show false 2>/dev/null || true
   
   print_info "Configurações básicas do dock aplicadas"
   print_warn "Configurações avançadas desabilitadas para evitar erros de compatibilidade"
@@ -1958,7 +1962,7 @@ configure_dash_to_dock() {
   print_info "Dock configurado:"
   print_info "- Extensão: $(basename "$dock_schema")"
   print_info "- Posição: Parte inferior da tela"
-  print_info "- Auto hide: Ativado"
+  print_info "- Auto hide: Ativado - aparece com mouse na parte inferior"
   
   print_warn "Reinicie o GNOME Shell (Alt+F2, digite 'r', Enter) ou faça logout/login para aplicar todas as mudanças"
 }
