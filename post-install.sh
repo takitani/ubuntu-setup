@@ -201,6 +201,9 @@ install_desktop_apps() {
   # Mission Center
   install_mission_center || failed_apps+=("Mission Center")
   
+  # Postman
+  install_postman || failed_apps+=("Postman")
+  
   # VS Code
   install_vscode || failed_apps+=("VS Code")
   
@@ -336,6 +339,30 @@ install_mission_center() {
   else
     print_warn "Flatpak desabilitado, Mission Center não pode ser instalado"
     print_info "Para instalar manualmente: flatpak install flathub io.missioncenter.MissionCenter"
+    return 1
+  fi
+}
+
+install_postman() {
+  if flatpak list | grep -q com.getpostman.Postman; then
+    print_info "Postman já está instalado."
+    return 0
+  fi
+  
+  print_info "Instalando Postman (API Client)..."
+  
+  if [[ "$auto_install_flatpak" == true ]]; then
+    print_info "Instalando Postman via Flatpak..."
+    if flatpak install -y flathub com.getpostman.Postman 2>/dev/null; then
+      print_info "Postman instalado com sucesso via Flatpak!"
+      return 0
+    else
+      print_warn "Falha ao instalar Postman via Flatpak"
+      return 1
+    fi
+  else
+    print_warn "Flatpak desabilitado, Postman não pode ser instalado"
+    print_info "Para instalar manualmente: flatpak install flathub com.getpostman.Postman"
     return 1
   fi
 }
@@ -1344,7 +1371,7 @@ EOF
   
   # Configurar aplicações favoritas no dock
   print_info "Configurando aplicações favoritas..."
-  local favorites="['org.gnome.Nautilus.desktop', 'google-chrome.desktop', 'code.desktop', 'org.gnome.Terminal.desktop', 'rider_rider.desktop', 'datagrip_datagrip.desktop', 'io.missioncenter.MissionCenter.desktop', 'slack.desktop', 'discord.desktop', 'com.rtosta.zapzap.desktop']"
+  local favorites="['org.gnome.Nautilus.desktop', 'google-chrome.desktop', 'code.desktop', 'org.gnome.Terminal.desktop', 'rider_rider.desktop', 'datagrip_datagrip.desktop', 'io.missioncenter.MissionCenter.desktop', 'com.getpostman.Postman.desktop', 'slack.desktop', 'discord.desktop', 'com.rtosta.zapzap.desktop']"
   gsettings set org.gnome.shell favorite-apps "$favorites"
   
   print_info "Autostart configurado para aplicações selecionadas."
