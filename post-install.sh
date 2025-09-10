@@ -19,7 +19,15 @@ print_warn()  { printf "\033[1;33m[!]\033[0m %s\n" "$*"; }
 print_error() { printf "\033[1;31m[x]\033[0m %s\n" "$*"; }
 print_step()  { CURRENT_STEP="$*"; printf "\n\033[1;36m==> %s\033[0m\n" "$*"; }
 
-trap 'print_error "Falhou em: ${CURRENT_STEP:-passo desconhecido}"' ERR
+# Função de cleanup para encerrar keepalive do sudo
+cleanup() {
+  if [[ -n "${SUDO_PID:-}" ]]; then
+    kill $SUDO_PID 2>/dev/null || true
+  fi
+}
+
+trap 'cleanup; print_error "Falhou em: ${CURRENT_STEP:-passo desconhecido}"' ERR
+trap 'cleanup' EXIT
 
 auto_install_flatpak=true
 auto_install_snap=true
@@ -54,6 +62,25 @@ if [[ ${EUID:-$(id -u)} -eq 0 ]]; then
   print_error "Execute este script como usuário normal (não root)."
   exit 1
 fi
+
+# Solicitar privilégios sudo no início e manter sessão ativa
+print_info "Solicitando privilégios administrativos..."
+if ! sudo -v; then
+  print_error "Privilégios administrativos são necessários para executar este script."
+  exit 1
+fi
+
+# Manter sessão sudo ativa em background
+keep_sudo_alive() {
+  while true; do
+    sudo -n true
+    sleep 300  # Renovar a cada 5 minutos
+  done 2>/dev/null &
+  echo $!
+}
+
+# Iniciar keepalive do sudo
+SUDO_PID=$(keep_sudo_alive)
 
 create_backup() {
   local file="$1"
@@ -307,6 +334,15 @@ install_desktop_apps() {
   
   # LocalSend
   install_localsend || failed_apps+=("LocalSend")
+  
+  # Docker
+  install_docker || failed_apps+=("Docker")
+  
+  # Lazydocker
+  install_lazydocker || failed_apps+=("Lazydocker")
+  
+  # Lazygit
+  install_lazygit || failed_apps+=("Lazygit")
   
   if [[ ${#failed_apps[@]} -eq 0 ]]; then
     print_info "Todos os aplicativos desktop foram instalados com sucesso."
@@ -1601,6 +1637,269 @@ install_localsend() {
   
   print_warn "Falha ao instalar LocalSend após $max_retries tentativas"
   print_info "Você pode tentar instalar manualmente em: https://github.com/localsend/localsend/releases/latest"
+  return 1
+}
+
+install_docker() {
+  if command -v docker >/dev/null 2>&1; then
+    print_info "Docker já está instalado."
+    return 0
+  fi
+
+  print_info "Instalando Docker..."
+  
+  # Instalar dependências
+  sudo apt update
+  sudo apt install -y apt-transport-https ca-certificates curl gnupg lsb-release
+  
+  # Adicionar chave GPG oficial do Docker
+  print_info "Adicionando chave GPG do Docker..."
+  sudo mkdir -p /etc/apt/keyrings
+  curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+  
+  # Adicionar repositório do Docker
+  print_info "Adicionando repositório do Docker..."
+  echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+  
+  # Instalar Docker
+  sudo apt update
+  sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+  
+  # Adicionar usuário ao grupo docker
+  print_info "Adicionando usuário ao grupo docker..."
+  sudo usermod -aG docker $USER
+  
+  # Habilitar e iniciar Docker
+  sudo systemctl enable docker
+  sudo systemctl start docker
+  
+  # Verificar instalação
+  if command -v docker >/dev/null 2>&1; then
+    local version=$(docker --version | cut -d' ' -f3 | cut -d',' -f1)
+    print_info "Docker versão $version instalado com sucesso!"
+    print_info "IMPORTANTE: Faça logout e login novamente para usar Docker sem sudo"
+    return 0
+  else
+    print_warn "Falha ao instalar Docker"
+    return 1
+  fi
+}
+
+install_lazydocker() {
+  if command -v lazydocker >/dev/null 2>&1; then
+    print_info "Lazydocker já está instalado."
+    return 0
+  fi
+
+  print_info "Instalando Lazydocker..."
+  
+  # Instalar jq se necessário
+  if ! command -v jq >/dev/null 2>&1; then
+    sudo apt install -y jq
+  fi
+  
+  local api_url="https://api.github.com/repos/jesseduffield/lazydocker/releases/latest"
+  local temp_file="/tmp/lazydocker.tar.gz"
+  local install_dir="/usr/local/bin"
+  local max_retries=3
+  
+  # Detectar arquitetura
+  local arch=$(uname -m)
+  local lazydocker_arch=""
+  
+  case "$arch" in
+    x86_64)
+      lazydocker_arch="x86_64"
+      ;;
+    aarch64|arm64)
+      lazydocker_arch="arm64"
+      ;;
+    *)
+      print_warn "Arquitetura $arch não suportada pelo Lazydocker"
+      return 1
+      ;;
+  esac
+  
+  for attempt in $(seq 1 $max_retries); do
+    print_info "Tentativa $attempt/$max_retries para baixar Lazydocker..."
+    
+    # Obter informações da versão mais recente
+    local release_info=$(curl -sL "$api_url")
+    
+    if [[ -z "$release_info" ]]; then
+      print_warn "Falha ao obter informações do release"
+      if [[ $attempt -lt $max_retries ]]; then
+        sleep 3
+        continue
+      else
+        return 1
+      fi
+    fi
+    
+    # Extrair URL de download para a arquitetura correta
+    local download_url=$(echo "$release_info" | jq -r ".assets[] | select(.name | contains(\"Linux_${lazydocker_arch}.tar.gz\")) | .browser_download_url")
+    
+    if [[ -z "$download_url" ]] || [[ "$download_url" == "null" ]]; then
+      print_warn "Não foi possível encontrar arquivo para arquitetura $lazydocker_arch"
+      if [[ $attempt -lt $max_retries ]]; then
+        sleep 3
+        continue
+      else
+        return 1
+      fi
+    fi
+    
+    print_info "Baixando Lazydocker de: $download_url"
+    if wget -q --show-progress -O "$temp_file" "$download_url"; then
+      if [[ -f "$temp_file" ]] && file "$temp_file" | grep -q "gzip compressed"; then
+        print_info "Download concluído, extraindo Lazydocker..."
+        
+        # Extrair e instalar
+        if tar -xzf "$temp_file" -C /tmp/ lazydocker 2>/dev/null; then
+          if sudo mv /tmp/lazydocker "$install_dir/lazydocker" && sudo chmod +x "$install_dir/lazydocker"; then
+            print_info "Lazydocker instalado com sucesso!"
+            rm -f "$temp_file"
+            
+            # Verificar instalação
+            if command -v lazydocker >/dev/null 2>&1; then
+              local version=$(lazydocker --version 2>/dev/null | head -n1 | cut -d' ' -f3 || echo "unknown")
+              print_info "Lazydocker versão $version instalado"
+            fi
+            
+            return 0
+          else
+            print_warn "Falha ao instalar Lazydocker em $install_dir"
+            rm -f "$temp_file" /tmp/lazydocker
+          fi
+        else
+          print_warn "Falha ao extrair Lazydocker"
+          rm -f "$temp_file"
+        fi
+      else
+        print_warn "Arquivo baixado não é um tar.gz válido"
+        rm -f "$temp_file"
+      fi
+    else
+      print_warn "Falha ao baixar Lazydocker"
+    fi
+    
+    if [[ $attempt -lt $max_retries ]]; then
+      print_warn "Tentativa $attempt falhou, tentando novamente em 3s..."
+      sleep 3
+    fi
+  done
+  
+  print_warn "Falha ao instalar Lazydocker após $max_retries tentativas"
+  print_info "Você pode tentar instalar manualmente em: https://github.com/jesseduffield/lazydocker/releases/latest"
+  return 1
+}
+
+install_lazygit() {
+  if command -v lazygit >/dev/null 2>&1; then
+    print_info "Lazygit já está instalado."
+    return 0
+  fi
+
+  print_info "Instalando Lazygit..."
+  
+  # Instalar jq se necessário
+  if ! command -v jq >/dev/null 2>&1; then
+    sudo apt install -y jq
+  fi
+  
+  local api_url="https://api.github.com/repos/jesseduffield/lazygit/releases/latest"
+  local temp_file="/tmp/lazygit.tar.gz"
+  local install_dir="/usr/local/bin"
+  local max_retries=3
+  
+  # Detectar arquitetura
+  local arch=$(uname -m)
+  local lazygit_arch=""
+  
+  case "$arch" in
+    x86_64)
+      lazygit_arch="x86_64"
+      ;;
+    aarch64|arm64)
+      lazygit_arch="arm64"
+      ;;
+    *)
+      print_warn "Arquitetura $arch não suportada pelo Lazygit"
+      return 1
+      ;;
+  esac
+  
+  for attempt in $(seq 1 $max_retries); do
+    print_info "Tentativa $attempt/$max_retries para baixar Lazygit..."
+    
+    # Obter informações da versão mais recente
+    local release_info=$(curl -sL "$api_url")
+    
+    if [[ -z "$release_info" ]]; then
+      print_warn "Falha ao obter informações do release"
+      if [[ $attempt -lt $max_retries ]]; then
+        sleep 3
+        continue
+      else
+        return 1
+      fi
+    fi
+    
+    # Extrair URL de download para a arquitetura correta
+    local download_url=$(echo "$release_info" | jq -r ".assets[] | select(.name | contains(\"Linux_${lazygit_arch}.tar.gz\")) | .browser_download_url")
+    
+    if [[ -z "$download_url" ]] || [[ "$download_url" == "null" ]]; then
+      print_warn "Não foi possível encontrar arquivo para arquitetura $lazygit_arch"
+      if [[ $attempt -lt $max_retries ]]; then
+        sleep 3
+        continue
+      else
+        return 1
+      fi
+    fi
+    
+    print_info "Baixando Lazygit de: $download_url"
+    if wget -q --show-progress -O "$temp_file" "$download_url"; then
+      if [[ -f "$temp_file" ]] && file "$temp_file" | grep -q "gzip compressed"; then
+        print_info "Download concluído, extraindo Lazygit..."
+        
+        # Extrair e instalar
+        if tar -xzf "$temp_file" -C /tmp/ lazygit 2>/dev/null; then
+          if sudo mv /tmp/lazygit "$install_dir/lazygit" && sudo chmod +x "$install_dir/lazygit"; then
+            print_info "Lazygit instalado com sucesso!"
+            rm -f "$temp_file"
+            
+            # Verificar instalação
+            if command -v lazygit >/dev/null 2>&1; then
+              local version=$(lazygit --version 2>/dev/null | head -n1 | cut -d' ' -f6 | cut -d',' -f1 || echo "unknown")
+              print_info "Lazygit versão $version instalado"
+            fi
+            
+            return 0
+          else
+            print_warn "Falha ao instalar Lazygit em $install_dir"
+            rm -f "$temp_file" /tmp/lazygit
+          fi
+        else
+          print_warn "Falha ao extrair Lazygit"
+          rm -f "$temp_file"
+        fi
+      else
+        print_warn "Arquivo baixado não é um tar.gz válido"
+        rm -f "$temp_file"
+      fi
+    else
+      print_warn "Falha ao baixar Lazygit"
+    fi
+    
+    if [[ $attempt -lt $max_retries ]]; then
+      print_warn "Tentativa $attempt falhou, tentando novamente em 3s..."
+      sleep 3
+    fi
+  done
+  
+  print_warn "Falha ao instalar Lazygit após $max_retries tentativas"
+  print_info "Você pode tentar instalar manualmente em: https://github.com/jesseduffield/lazygit/releases/latest"
   return 1
 }
 
