@@ -991,32 +991,74 @@ configure_mise_tools() {
   if mise install node@lts 2>/dev/null && mise global node@lts 2>/dev/null; then
     print_info "Node.js LTS instalado e configurado como global"
     
-    # Instalar CLIs de IA após configurar Node.js
+    # Instalar CLIs de IA após configurar Node.js (com verificação prévia)
     if command -v npm >/dev/null 2>&1; then
       print_info "Instalando CLIs de IA..."
       
-      # Codex CLI
-      print_info "Instalando Codex CLI..."
-      if npm install -g @openai/codex 2>/dev/null; then
-        print_info "Codex CLI instalado com sucesso"
-      else
-        print_warn "Falha ao instalar Codex CLI"
-      fi
+      # Lista de CLIs para instalar com verificação prévia
+      local ai_clis=(
+        "codex:@openai/codex:Codex CLI"
+        "claude-code:@anthropic-ai/claude-code:Claude CLI" 
+        "gemini:@google/gemini-cli:Gemini CLI"
+      )
       
-      # Claude CLI
-      print_info "Instalando Claude CLI..."
-      if npm install -g @anthropic-ai/claude-code 2>/dev/null; then
-        print_info "Claude CLI instalado com sucesso"
-      else
-        print_warn "Falha ao instalar Claude CLI"
-      fi
+      local install_jobs=()
+      local needed_clis=()
       
-      # Gemini CLI
-      print_info "Instalando Gemini CLI..."
-      if npm install -g @google/gemini-cli 2>/dev/null; then
-        print_info "Gemini CLI instalado com sucesso"
+      # Verificar quais CLIs precisam ser instalados
+      for cli_info in "${ai_clis[@]}"; do
+        local cmd_name=$(echo "$cli_info" | cut -d: -f1)
+        local package_name=$(echo "$cli_info" | cut -d: -f2)
+        local display_name=$(echo "$cli_info" | cut -d: -f3)
+        
+        if ! command -v "$cmd_name" >/dev/null 2>&1; then
+          needed_clis+=("$cli_info")
+          print_info "Programando instalação: $display_name"
+        else
+          print_info "$display_name já está instalado"
+        fi
+      done
+      
+      # Instalar CLIs em paralelo se necessário
+      if [[ ${#needed_clis[@]} -gt 0 ]]; then
+        print_info "Instalando ${#needed_clis[@]} CLIs em paralelo..."
+        
+        for cli_info in "${needed_clis[@]}"; do
+          local cmd_name=$(echo "$cli_info" | cut -d: -f1)
+          local package_name=$(echo "$cli_info" | cut -d: -f2)
+          local display_name=$(echo "$cli_info" | cut -d: -f3)
+          
+          # Instalar em background
+          (
+            if npm install -g "$package_name" >/dev/null 2>&1; then
+              echo "$display_name:success"
+            else
+              echo "$display_name:failed"
+            fi
+          ) &
+          install_jobs+=($!)
+        done
+        
+        # Aguardar conclusão de todas as instalações
+        print_info "Aguardando conclusão das instalações paralelas..."
+        for job in "${install_jobs[@]}"; do
+          wait "$job"
+        done
+        
+        # Verificar resultados
+        print_info "Verificando instalações:"
+        for cli_info in "${needed_clis[@]}"; do
+          local cmd_name=$(echo "$cli_info" | cut -d: -f1)
+          local display_name=$(echo "$cli_info" | cut -d: -f3)
+          
+          if command -v "$cmd_name" >/dev/null 2>&1; then
+            print_info "$display_name instalado com sucesso"
+          else
+            print_warn "Falha ao instalar $display_name"
+          fi
+        done
       else
-        print_warn "Falha ao instalar Gemini CLI"
+        print_info "Todos os CLIs de IA já estão instalados"
       fi
     else
       print_warn "npm não encontrado, pulando instalação de CLIs de IA"
@@ -1828,6 +1870,11 @@ configure_gnome_settings() {
 configure_dash_to_dock() {
   print_info "Configurando dock do Ubuntu..."
   
+  # Debug: listar schemas disponíveis
+  print_info "Verificando extensões de dock disponíveis..."
+  local available_schemas=$(gsettings list-schemas | grep -E "(ubuntu-dock|dash-to-dock)" || echo "nenhuma")
+  print_info "Schemas encontrados: $available_schemas"
+  
   # Verificar se ubuntu-dock está disponível (padrão do Ubuntu)
   if gsettings list-schemas | grep -q "org.gnome.shell.extensions.ubuntu-dock"; then
     print_info "Configurando Ubuntu Dock (nativo)..."
@@ -1844,7 +1891,12 @@ configure_dash_to_dock() {
       fi
     fi
   else
-    print_warn "Nenhuma extensão de dock encontrada, pulando configuração"
+    print_warn "Nenhuma extensão de dock encontrada"
+    print_info "Extensões disponíveis:"
+    if command -v gnome-extensions >/dev/null 2>&1; then
+      gnome-extensions list | head -5 || echo "Nenhuma extensão listada"
+    fi
+    print_info "Pulando configuração do dock"
     return 0
   fi
   
